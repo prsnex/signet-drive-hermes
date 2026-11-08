@@ -144,37 +144,22 @@ class MirrorCase(unittest.TestCase):
         self.assertEqual(r.status, "in_step")
         self.assertEqual(len(self.points()), 1)
 
-    def test_a_write_inside_the_interval_waits_and_the_session_end_makes_the_point(self):
+    def test_every_change_makes_a_point_and_the_day_keeps_one_file(self):
+        # Chris, 2026-11-08: no hourly limit (Hermes Desktop ends a session after every turn, so the
+        # limit could never apply there); every change is saved and the day's newer point replaces the older.
         self.mirror.run_pass("session_start")
-        self.clock.advance(minutes=10)
+        self.clock.advance(minutes=2)
         self.write_memory("§ second fact\n")
         r = self.mirror.run_pass("after memory")
-        self.assertEqual(r.status, "pending", r)
-        self.assertEqual(len(self.points()), 1)
-        self.assertIn("next point at", r.line())
-        self.clock.advance(minutes=5)
-        r = self.mirror.run_pass("session_end")
         self.assertEqual(r.status, "uploaded", r)
         self.assertEqual(len(self.points()), 1, "one file per day: the newer point replaced the older")
         self.assertEqual(M.stamp_of(self.points()[0]), r.stamp)
         self.assertEqual(len(r.pruned), 1)
         self.assertIn("memories/MEMORY.md", self.members(self.points()[-1]))
-
-    def test_a_write_after_the_interval_makes_the_point(self):
-        self.mirror.run_pass("session_start")
-        self.clock.advance(hours=1, seconds=1)
-        self.write_memory("§ second fact\n")
-        r = self.mirror.run_pass("after memory")
-        self.assertEqual(r.status, "uploaded", r)
-        self.assertEqual(len(self.points()), 1, "the day's newer point replaced the older")
-        self.assertEqual(M.stamp_of(self.points()[0]), r.stamp)
-
-    def test_the_interval_is_a_setting(self):
-        m = M.Mirror(self.client, self.home, self.data, point_interval_s=600, now=self.clock)
-        m.run_pass("session_start")
-        self.clock.advance(minutes=11)
-        self.write_memory("§ second fact\n")
-        self.assertEqual(m.run_pass("after memory").status, "uploaded")
+        self.clock.advance(minutes=3)
+        r = self.mirror.run_pass("session_end")
+        self.assertEqual(r.status, "in_step", "nothing changed since, so the turn's end uploads nothing")
+        self.assertEqual(len(self.points()), 1)
 
     def test_case_6_local_wipe_deletes_nothing_and_asks(self):
         self.mirror.run_pass("session_start")

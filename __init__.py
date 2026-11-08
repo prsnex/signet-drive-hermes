@@ -76,7 +76,6 @@ class Runtime:
             # publishes it on no endpoint a plugin can read, so it is a setting named for its source.
             "mmd_hours": float(ctx.get_config("mmd_hours", default=24)),
             # The Memory Mirror's shape (Chris, 2026-11-07): one file per point, fewer points, a ceiling.
-            "point_interval_hours": float(ctx.get_config("point_interval_hours", default=1)),
             "prune": bool(ctx.get_config("prune", default=True)),
             "keep_days": int(ctx.get_config("keep_days", default=9)),
         }
@@ -96,7 +95,7 @@ class Runtime:
     def mirror(self) -> sd_mirror.Mirror:
         return sd_mirror.Mirror(self.client(), _hermes_home(), _data_dir(),
                                 root_name=self.cfg["root_name"], include_skills=self.cfg["include_skills"],
-                                point_interval_s=self.cfg["point_interval_hours"] * 3600.0, prune=self.cfg["prune"],
+                                prune=self.cfg["prune"],
                                 keep_days=self.cfg["keep_days"])
 
     # ---- the work, always off the agent's thread --------------------------
@@ -315,7 +314,7 @@ def _plain_words(rt: Runtime) -> list:
     the end of a terminal setup and by `/signet about` at any time."""
     days = rt.cfg["keep_days"]
     lines = ["What happens from here.",
-             f"1. Copies of your agent's memory and skills go to a folder in its drive called {rt.cfg['root_name']}, one dated file per day.",
+             f"1. Copies of your agent's memory and skills go to a folder in its drive called {rt.cfg['root_name']} after every change, one dated file per day.",
              f"2. Copies from the last {days} days are kept. The newest is never removed."]
     if rt.cfg["prune"]:
         lines.append("3. The plugin removes only its own older copies. It never touches a file you renamed or anything it did not make.")

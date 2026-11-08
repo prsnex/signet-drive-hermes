@@ -212,7 +212,7 @@ class SetupCommandCase(StatusCase):
             def __init__(self): self.set = {}
             def set_config(self, k, v): self.set[k] = v
         class RT:
-            cfg = {"mmd_hours": 24, "point_interval_hours": 1.0, "keep_days": 9, "prune": True,
+            cfg = {"mmd_hours": 24, "keep_days": 9, "prune": True,
                    "root_name": "Memory Mirror", "files_folder": "Files", "handle": "test-agent"}
             ctx = Ctx()
             started = 0

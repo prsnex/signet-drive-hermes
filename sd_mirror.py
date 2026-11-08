@@ -294,14 +294,13 @@ class MirrorBusy(Exception):
 class Mirror:
     def __init__(self, client: SignetClient, hermes_home: Path, data_dir: Path,
                  root_name: str = "Memory Mirror", include_skills: bool = True,
-                 point_interval_s: float = 3600.0, prune: bool = True, keep_days: int = 9,
+                 prune: bool = True, keep_days: int = 9,
                  now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
         self.client = client
         self.hermes_home = Path(hermes_home)
         self.data_dir = Path(data_dir)
         self.root_name = root_name
         self.include_skills = include_skills
-        self.point_interval_s = float(point_interval_s)
         self.prune = bool(prune)
         self.keep_days = int(keep_days)        # a point older than this many days is removed; one point per day is kept
         self.now = now
@@ -461,15 +460,9 @@ class Mirror:
                              last_reason=reason, missing=missing)
             return PassResult("needs_you", missing=missing)
 
-        force = kind == "pre_restore" or reason in FORCE_REASONS
-        if latest is not None and not force:
-            age = (started - latest.created()).total_seconds()
-            if age < self.point_interval_s:
-                due_at = (latest.created() + timedelta(seconds=self.point_interval_s)).isoformat()
-                self._save_state(last_pass=started.isoformat(), last_status="pending", last_reason=reason,
-                                 pending_since=self.state().get("pending_since") or started.isoformat(),
-                                 next_point_at=due_at)
-                return PassResult("pending", next_point_at=due_at)
+        # Every change makes a point, and the day's newer point replaces the older (Chris, 2026-11-08:
+        # Hermes Desktop ends a session after every turn, so v06's hourly limit could never apply there,
+        # and a backup that saves every change is the better promise; the ceiling keeps the folder small).
 
         stamp = new_stamp(started)
         name = point_name(stamp, kind)

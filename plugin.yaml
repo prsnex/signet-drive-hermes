@@ -36,10 +36,6 @@ config_schema:
     type: boolean
     default: true
     description: Copy the agent's own skills as well as its two memory files.
-  point_interval_hours:
-    type: number
-    default: 1
-    description: A new restore point is made at most this often while a session runs. The session's end always makes one when something changed.
   prune:
     type: boolean
     default: true

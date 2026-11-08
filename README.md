@@ -38,7 +38,7 @@ Today Signet Drive supports AI agents operating via local Apple-silicon Macs. Wi
 
 **A place for your agent's files.** Four tools, to save, fetch, list and restore. Saves go into a folder called Files and never overwrite. The four are a deliberately small set, so a tool call can never remove anything. The full Signet Drive command set, delete and sharing within the capability you give it included, stays available to your agent through the Signet app's command line, as for any agent using Signet Drive natively.
 
-**Backup copies of your agent's memory.** At the end of every session, and at most once an hour while it works, the plugin saves your agent's two memory files and its own skills into a folder of its drive called Memory Mirror, as one dated file. It keeps one file per day for nine days, and one more for nine days after a restore, and it removes only its own older copies, so the folder never grows without end. Your agent can restore any of those copies on the same Mac, and the plugin saves the present state first so a restore can be undone.
+**Backup copies of your agent's memory.** After every change your agent makes to its memory or its own skills, the plugin saves them into a folder of its drive called Memory Mirror, as one dated file, and the day's file is replaced each time. It keeps one file per day for nine days, and one more for nine days after a restore, and it removes only its own older copies, so the folder never grows without end. Your agent can restore any of those copies on the same Mac, and the plugin saves the present state first so a restore can be undone.
 
 **A status item in Hermes Desktop.** A few words are always in the status bar, such as Drive in step, Drive behind or Drive needs you. A click opens a view of the agent's files and its restore points, to read and not to change, with a button that opens your own drive in the browser.
 
@@ -93,7 +93,6 @@ Under `plugins.entries.signet-drive.settings` in the profile's Hermes config.
 | Setting | Default | What it does |
 |---|---|---|
 | `keep_days` | 9 | The one retention number. One restore point per day is kept, a point older than this many days is removed, and the newest is always kept. |
-| `point_interval_hours` | 1 | A new restore point at most this often while a session runs. The session's end always makes one when something changed. |
 | `prune` | true | The mirror removes its own older points by the rule above. Off, it only counts what waits. |
 | `include_skills` | true | Copy the agent's own skills as well as its two memory files. |
 | `root_name` | Memory Mirror | The folder that holds the copies. |
