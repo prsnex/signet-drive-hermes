@@ -9,9 +9,11 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 from .signet_cli import SignetClient
 from . import sd_mirror, sd_schemas, sd_status, sd_tools
@@ -198,7 +200,7 @@ def register(ctx):
         if verb == "status":
             return rt.status().line()
         if verb == "setup":
-            code = words[1] if len(words) > 1 else None
+            code = _extract_code(" ".join(words[1:]))
             lines: list = []
             _setup(rt, code, out=lines.append, form="chat")
             if code and rt.client().resolved_binary() and not rt.cfg.get("handle"):
@@ -211,9 +213,9 @@ def register(ctx):
                     _setup_enrol(rt, rt.client(), code, note, "chat")
                 _thread(enrol, daemon=False, name="signet-drive-setup").start()
                 lines.append("   Enrolling now. Approve it on your account page with your passkey. When the page shows your agent as connected, type /signet status here. Then /signet about says what happens from here.")
-            return "\n".join(lines)
+            return "\n\n".join(lines)     # a blank line between every line: Hermes draws command output small and gray (Chris, 2026-11-08)
         if verb == "about":
-            return "\n".join(_plain_words(rt))
+            return "\n\n".join(_plain_words(rt))
         if verb == "check":
             rt.start()
             return rt.status().line()
@@ -259,7 +261,7 @@ def register(ctx):
         if verb == "pass":
             rt.run_pass("cli"); print(rt.status().line()); return
         if verb == "setup":
-            _setup(rt, getattr(args, "code", None)); return
+            _setup(rt, _extract_code(getattr(args, "code", None) or ""), out=lambda line: print(line + "\n")); return
         print("Usage: hermes signet-drive <setup [CODE]|status|pass>")
 
     ctx.register_cli_command(name="signet-drive", help="Signet Drive for Hermes", setup_fn=setup_argparse, handler_fn=cli)
@@ -272,6 +274,25 @@ def _version_number(client) -> str:
     return words[1] if len(words) > 1 else (words[0] if words else "unknown")
 
 
+_CODE_RE = re.compile(r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{32,})(?![A-Za-z0-9_-])")
+
+
+def _extract_code(raw: str) -> Optional[str]:
+    """The one-time code from whatever the human typed or pasted: the bare code, or the account
+    page's whole block ("Run: signet enroll <code> …"), where the token after `enroll` wins and
+    otherwise the longest code-shaped token does (Chris met the block on 2026-11-08)."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    m = re.search(r"signet\s+enroll\s+([A-Za-z0-9_-]{16,})", text)
+    if m:
+        return m.group(1)
+    tokens = _CODE_RE.findall(text)
+    if tokens:
+        return max(tokens, key=len)
+    return text.split()[0] if len(text.split()) == 1 else None
+
+
 def _how_to_give_the_code(form: str) -> str:
     return ("Then come back to this chat and type /signet setup again, this time followed by that code." if form == "chat"
             else "Then come back to this terminal and run hermes signet-drive setup again, this time followed by that code.")
@@ -280,7 +301,7 @@ def _how_to_give_the_code(form: str) -> str:
 def _setup_intro(rt: Runtime, client, form: str) -> list:
     """Steps 1 and 2, the same in both forms."""
     lines = ["Signet Drive for Hermes. Setup.",
-             "You have already installed this plugin, turned on its two switches in Hermes (the agent half and the Desktop half), and restarted the gateway. Please follow the steps below for anything still needed."]
+             "You have already installed this plugin, which turned on both its halves in Hermes (the agent half and the Desktop half, and you can turn the Desktop half off), and restarted the gateway. Please follow the steps below for anything still needed."]
     if not client.resolved_binary():
         lines.append("1. The Signet app. Not found. In the Signet web app, under Signet Drive access, install the signed Signet app once on this Mac and enter the setup code that page gives you, so the app is connected to your account. Then run this again.")
         return lines
@@ -310,6 +331,28 @@ def _plain_words(rt: Runtime) -> list:
 
 
 _ENROL_TIMEOUT_S = 35 * 60   # the code lives 30 minutes; the client blocks through two human steps
+_APPROVAL_WAIT_S = 15 * 60   # how long setup waits for the Guardian's passkey approval before leaving it to the next check
+_APPROVAL_POLL_S = 5.0
+
+
+def _access_status(rt: Runtime) -> str:
+    try:
+        return str(((rt.client().whoami() or {}).get("drive_access") or {}).get("status") or "")
+    except Exception:
+        return ""
+
+
+def _wait_for_approval(rt: Runtime, out, limit_s: float = _APPROVAL_WAIT_S, poll_s: float = _APPROVAL_POLL_S) -> str:
+    """Poll the agent's access until the Guardian's approval shows (`awaiting_pickup`) or the
+    access is already `authorized`; `none` means the passkey step has not happened yet. On
+    2026-11-08 the connect ran one second after the enrolment, before Chris's approval had
+    reached the server, and the page sat at "waiting to connect"."""
+    deadline = time.monotonic() + limit_s
+    status = _access_status(rt)
+    while status in ("", "none") and time.monotonic() < deadline:
+        time.sleep(poll_s)
+        status = _access_status(rt)
+    return status
 
 
 def _setup_enrol(rt: Runtime, client, code: str, out, form: str) -> bool:
@@ -339,12 +382,18 @@ def _setup_enrol(rt: Runtime, client, code: str, out, form: str) -> bool:
     rt.ctx.set_config("handle", handle)
     rt.cfg["handle"] = handle
     rt.status().write(config=rt.cfg, enrolled_at=sd_status._now().isoformat())
-    out(f"4. Enrolled as {handle}. Connecting to the drive access you just approved.")
-    try:
-        rt.client().connect()
-        out("   Connected. Your account page shows the agent as connected.")
-    except Exception as e:  # the start check says what is missing
-        out(f"   Not connected yet ({e}). The check below says what is missing.")
+    out(f"4. Enrolled as {handle}. Waiting for your approval on your account page, then connecting.")
+    status = _wait_for_approval(rt, out)
+    if status == "authorized":
+        out("   Connected already. Your account page shows the agent as connected.")
+    elif status == "awaiting_pickup":
+        try:
+            rt.client().connect()
+            out("   Connected. Your account page shows the agent as connected.")
+        except Exception as e:  # the start check says what is missing
+            out(f"   Not connected yet ({e}). The check below says what is missing.")
+    else:
+        out("   Your approval has not reached the server yet. Approve on your account page, and the next check connects on its own.")
     out("5. The first check, and the first copy of your agent's memory.")
     rt.start()
     out("   " + rt.status().line())

@@ -242,7 +242,7 @@ class Status:
                 state = "needs_you"
         handle = ""
         if state == "ok" and not client.handle:
-            checks.append(Check("enrolled", False, "no handle configured; run `hermes signet-drive setup` with the one-time code"))
+            checks.append(Check("enrolled", False, "no handle configured, so setup has not yet been run with a one-time code"))
             state = "needs_you"
         if state == "ok":
             try:
@@ -252,7 +252,7 @@ class Status:
                                     f"{handle} under {me.get('guardian') or me.get('guardian_handle', '?')}, sharing {me.get('prsn_sharing_capability', '?')}"))
                 cap = str(me.get("prsn_sharing_capability", "?"))
                 if cap == "read_write":
-                    checks.append(Check("sharing", None, "read_write, so your agent can invite writers into its folders, and the file tools' data label is then the only guard. Set it to none on your account page unless you want that."))
+                    checks.append(Check("sharing", None, "read-write, so your agent can invite others to write into its folders, and the data label on fetched files is then the only guard. On your account page the choice is under Sharing capability, and Can share, read-only or Can't share with anyone else narrows it."))
                 else:
                     checks.append(Check("sharing", True, cap))
                 da = me.get("drive_access") or {}
@@ -387,4 +387,6 @@ class Status:
         err = s.get("last_error")
         if err and (not last or str(s.get("last_error_at", "")) > str(last.get("at", ""))):
             parts.append(f"Last attempt failed, {_short_error(err)}.")
+        if parts and parts[-1].endswith(","):   # a part written to continue, with nothing after it (the not-enrolled case)
+            parts[-1] = parts[-1][:-1] + "."
         return " ".join(parts)

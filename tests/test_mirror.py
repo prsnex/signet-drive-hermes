@@ -635,5 +635,25 @@ class RunOneCase(MirrorCase):
         self.assertIn("did not answer", r.line())
 
 
+class EmptyProfileCase(unittest.TestCase):
+    """A fresh profile has no memory files until the agent saves one; the pass says so instead
+    of "in step" (the demo agent's first check, 2026-11-08)."""
+
+    def test_a_profile_with_no_memory_files_reads_nothing_to_copy_yet(self):
+        tmp = Path(tempfile.mkdtemp(prefix="sde-"))
+        try:
+            home = tmp / "hermes"; (home / "memories").mkdir(parents=True)
+            store = tmp / "drive.json"
+            client = SignetClient(binary=str(FAKE), handle="empty-agent", extra_env={"SIGNET_FAKE_STORE": str(store)})
+            m = M.Mirror(client, home, tmp / "data")
+            r = m.run_pass("session_start")
+            self.assertEqual(r.status, "in_step")
+            self.assertEqual(r.tracked, 0)
+            self.assertIn("Nothing to copy yet", r.line())
+            self.assertNotIn(";", r.line())
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

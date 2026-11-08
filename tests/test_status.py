@@ -227,7 +227,7 @@ class SetupCommandCase(StatusCase):
         self.pkg._setup(rt, None, out=lines.append)
         text = "\n".join(lines)
         self.assertIn("Signet Drive for Hermes. Setup.", text)
-        self.assertIn("two switches", text)                 # Hermes's own steps named as done
+        self.assertIn("both its halves", text)              # Hermes turns both on at install (Hlin, 11-08)
         self.assertIn("connected the Signet app", text)     # the account page's gate, in Chris's words
         self.assertIn("PRSN Accounts", text)
         self.assertIn("Status now.", text)
@@ -273,6 +273,32 @@ class SetupCommandCase(StatusCase):
         self.assertIn("Every 30 days", text)
         self.assertNotIn(";", text)
         self.assertEqual(len([l for l in text.splitlines() if l[:2] in ("1.","2.","3.","4.","5.","6.","7.","8.","9.")]), 9)   # a short numbered list, Chris's shape
+
+    def test_the_code_is_found_inside_the_pages_pasted_block(self):
+        x = self.pkg._extract_code
+        self.assertEqual(x("A0qhoL3eJTahmggQTsWhNh5ncxch3jcxPOLkm2E10ZM"), "A0qhoL3eJTahmggQTsWhNh5ncxch3jcxPOLkm2E10ZM")
+        block = ("You're being enrolled in Signet Drive by your guardian.\n"
+                 "Run: signet enroll A0qhoL3eJTahmggQTsWhNh5ncxch3jcxPOLkm2E10ZM\n"
+                 "This creates your keys in this Mac's Secure Enclave. If it fails, send your guardian the exact output.")
+        self.assertEqual(x(block), "A0qhoL3eJTahmggQTsWhNh5ncxch3jcxPOLkm2E10ZM")
+        self.assertIsNone(x(""))
+        self.assertIsNone(x("please set me up with my drive"))
+
+    def test_the_chat_setup_leaves_a_blank_line_between_every_line(self):
+        rt = self._runtime(self.client())
+        lines = []
+        self.pkg._setup(rt, None, out=lines.append, form="chat")
+        text = "\n\n".join(lines)
+        self.assertNotIn("\n1.", text.replace("\n\n1.", ""))   # no item follows another without a blank line
+
+    def test_setup_waits_for_the_approval_before_it_connects(self):
+        # 2026-11-08: connect ran before the Guardian's passkey approval reached the server
+        rt = self._runtime(self.client())
+        seen = iter(["none", "none", "awaiting_pickup"])
+        self.pkg._access_status = lambda _rt, _it=seen: next(_it, "awaiting_pickup")
+        notes = []
+        status = self.pkg._wait_for_approval(rt, notes.append, limit_s=5, poll_s=0.01)
+        self.assertEqual(status, "awaiting_pickup")
 
     def test_setup_narration_is_identical_through_print_and_through_a_list(self):
         rt = self._runtime(self.client())

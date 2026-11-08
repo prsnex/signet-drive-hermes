@@ -236,9 +236,12 @@ class PassResult:
     retirable: int = 0                              # points the ceiling would remove, when thinning is off
     others: int = 0                                 # point files in the folder this plugin did not make or has lost by rename
     undo: int = 0                                   # restores' undo points kept beside the day's point
+    tracked: int = -1                               # local files the mirror tracks at this pass; 0 is a profile with no memory yet
 
     def line(self) -> str:
         if self.status == "in_step":
+            if self.tracked == 0:
+                return "Nothing to copy yet. Your agent has no memory files until it saves one." + self._tail()
             s = "Mirror in step."
             if self.pruned:
                 s += f" {len(self.pruned)} retired point(s) removed."
@@ -250,7 +253,7 @@ class PassResult:
             return s + self._tail()
         if self.status == "pending":
             when = self.next_point_at[11:16] + "Z" if len(self.next_point_at) >= 16 else "the interval's end"
-            return f"Mirror in step; changes wait for the next point at {when} or at the session's end."
+            return f"Mirror in step. Changes wait for the next point at {when} or at the session's end."
         if self.status == "needs_you":
             return (f"Drive needs you. {len(self.missing)} file(s) the last point held are missing "
                     f"locally: {', '.join(self.missing[:3])}{'…' if len(self.missing) > 3 else ''}. "
@@ -266,7 +269,7 @@ class PassResult:
         if self.undo:
             s += f" {self.undo} undo point(s) from restores kept."
         if self.others:
-            s += f" {self.others} point file(s) in the folder are not the mirror's own (pinned or placed there); they are kept and never removed."
+            s += f" {self.others} point file(s) in the folder are not the mirror's own (pinned or placed there), and they are kept and never removed."
         return s
 
 
@@ -374,13 +377,13 @@ class Mirror:
         if self._root_known:
             return
         if not self.client.handle:
-            raise SignetError(61, "not_enrolled", "no handle configured; the mirror does not run as a default identity", [])
+            raise SignetError(61, "not_enrolled", "no handle configured, so the mirror does not run as a default identity", [])
         # An agent's own top-level folders show under `folder list` at the top level;
         # `share list` lists folders shared WITH the caller (the public CLI specification,
         # and a duplicate created on 2026-11-07 by reading the wrong one).
         names = [str(r.get("name")) for r in self.client.folder_list(None)]
         if names.count(self.root_name) > 1:
-            raise SignetError(2, "ambiguous_root", f"{self.root_name!r} exists more than once at the top level; the human must remove the extra", [])
+            raise SignetError(2, "ambiguous_root", f"{self.root_name!r} exists more than once at the top level, and the human must remove the extra", [])
         if self.root_name not in names:
             self.client.share_create(self.root_name)
         self._root_known = True
@@ -416,7 +419,7 @@ class Mirror:
     def _pass(self, reason: str, kind: str, note: str) -> PassResult:
         started = self.now()
         if not self.client.handle:
-            return PassResult("refused", reason="Not enrolled: no handle configured, so nothing runs as a default identity.")
+            return PassResult("refused", reason="Not enrolled, no handle configured, so nothing runs as a default identity.")
         self._sweep_temps()
         try:
             self.reconcile_index()
@@ -449,7 +452,7 @@ class Mirror:
                 except SignetError as e:
                     self._save_state(thin_error=f"{e.exit_code} {e.code}: {e.message}", thin_error_at=started.isoformat())
             retirable, others, undo = self._counts_quiet()
-            return PassResult("in_step", pruned=pruned, retirable=retirable, others=others, undo=undo)
+            return PassResult("in_step", pruned=pruned, retirable=retirable, others=others, undo=undo, tracked=len(local))
 
         if missing:
             # Nothing is uploaded and nothing is removed: a point that enshrined the loss as the
@@ -566,7 +569,7 @@ class Mirror:
 
     def _failed(self, e: SignetError, started, reason) -> PassResult:
         if e.locked:
-            status, text = "behind", f"The Mac is locked, behind since {started.strftime('%H:%M')}Z; it catches up at the next start."
+            status, text = "behind", f"This Mac's keys are unavailable, behind since {started.strftime('%H:%M')}Z, and it catches up at the next start."
         elif e.temporary:
             status, text = "behind", f"The drive did not answer ({e.code}), behind since {started.strftime('%H:%M')}Z."
         elif e.read_only:
