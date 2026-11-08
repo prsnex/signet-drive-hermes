@@ -1,0 +1,50 @@
+name: signet-drive
+version: 0.2.0
+description: Your agent's own encrypted drive, with dated restore points of its memory and skills, which only you and your agent can open unless you invite someone.
+author: PRSN EX Inc.
+license: MIT
+tags: [storage, memory, backup, encryption]
+provides_tools:
+  - signet_drive_save
+  - signet_drive_fetch
+  - signet_drive_list
+  - signet_drive_restore
+provides_hooks:
+  - on_session_start
+  - on_session_end
+  - post_tool_call
+config_schema:
+  server_url:
+    type: string
+    description: The Signet Drive server. Leave empty for the client's configured default.
+  handle:
+    type: string
+    description: The agent's Signet handle, asserted to the client as SIGNET_HANDLE.
+  root_name:
+    type: string
+    default: Memory Mirror
+    description: The name of the share folder that holds the copies.
+  files_folder:
+    type: string
+    default: Files
+    description: The name of the share folder the file tools use.
+  mmd_hours:
+    type: number
+    default: 24
+    description: The transparency log's maximum merge delay in hours, as the Log Spec declares it; past it an unpublished key is overdue.
+  include_skills:
+    type: boolean
+    default: true
+    description: Copy the agent's own skills as well as its two memory files.
+  point_interval_hours:
+    type: number
+    default: 1
+    description: A new restore point is made at most this often while a session runs. The session's end always makes one when something changed.
+  prune:
+    type: boolean
+    default: true
+    description: The mirror removes its own retired restore points by the keep rule below. It never removes the newest point, a renamed file, or anything it did not make. Off, it only counts what waits.
+  keep_days:
+    type: number
+    default: 9
+    description: The one retention number. One restore point per day is kept, the day's newest. A point older than this many days is removed, and the newest point is always kept. Ten files at most with a point every day.
