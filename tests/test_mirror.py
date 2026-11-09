@@ -640,5 +640,38 @@ class EmptyProfileCase(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class ChangeDuringAPassCase(unittest.TestCase):
+    """A write that arrives while a pass runs is not dropped: the busy caller marks a rerun and the
+    running pass scans once more at its end (Bob's case 11 at 4c84361, 2026-11-08)."""
+
+    def test_a_change_during_a_pass_lands_in_the_days_point(self):
+        tmp = Path(tempfile.mkdtemp(prefix="sdr-"))
+        try:
+            home = tmp / "hermes"; (home / "memories").mkdir(parents=True)
+            (home / "memories" / "MEMORY.md").write_text("§ first\n")
+            client = SignetClient(binary=str(FAKE), handle="rerun-agent", extra_env={"SIGNET_FAKE_STORE": str(tmp / "drive.json")})
+            m = M.Mirror(client, home, tmp / "data")
+            original = m._pass
+            calls = []
+            def pass_with_a_write_meanwhile(reason, kind, note):
+                calls.append(reason)
+                result = original(reason, kind, note)          # the scan and the upload of what it saw
+                if len(calls) == 1:                            # then a write lands and a busy caller marks the rerun
+                    (home / "memories" / "MEMORY.md").write_text("§ first\n§ second, written during the upload\n")
+                    m._rerun_wanted = True
+                return result
+            m._pass = pass_with_a_write_meanwhile
+            r = m.run_pass("after memory")
+            self.assertEqual(len(calls), 2, calls)
+            self.assertIn("rerun", calls[1])
+            self.assertEqual(r.status, "uploaded")
+            newest = m.latest_point(refresh=True)
+            self.assertIsNotNone(newest)
+            self.assertEqual(newest.entries["memories/MEMORY.md"]["sha256"], M.sha256_file(home / "memories" / "MEMORY.md"),
+                             "the day's point holds the write that arrived during the first upload")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

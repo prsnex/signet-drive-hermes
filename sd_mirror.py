@@ -398,6 +398,10 @@ class Mirror:
     def run_pass(self, reason: str = "trigger", kind: str = "pass", note: str = "") -> PassResult:
         """One reconcile. Thread-safe: a second caller while one runs gets MirrorBusy."""
         if not self._lock.acquire(blocking=False):
+            # The running pass scanned before this caller's change: ask it to scan once more at its
+            # end, so a write that arrives during an upload lands in the day's point instead of
+            # waiting for the next trigger (Bob, case 11 at 4c84361, 2026-11-08).
+            self._rerun_wanted = True
             raise MirrorBusy("a pass is already running")
         # A second lock across processes: the gateway and a CLI session are two (Bob, run 1, case 11).
         lock_path = self.data_dir / "pass.lock"
@@ -408,7 +412,12 @@ class Mirror:
             except OSError:
                 raise MirrorBusy("a pass is already running in another process")
             try:
-                return self._pass(reason, kind, note)
+                self._rerun_wanted = False
+                result = self._pass(reason, kind, note)
+                if getattr(self, "_rerun_wanted", False) and kind == "pass":
+                    self._rerun_wanted = False
+                    result = self._pass(reason + ", rerun for a change that arrived meanwhile", kind, note)
+                return result
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         finally:
