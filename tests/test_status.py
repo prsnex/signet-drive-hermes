@@ -396,6 +396,18 @@ class SettleCase(StatusCase):
         self.assertEqual(len(self._points()), 1, "the day's newer point replaced the older")
         self.assertEqual(self._memory_in(self._points()[0]), "changed\n")
 
+    def test_a_due_time_already_past_says_the_change_waits_for_the_next_start(self):
+        from datetime import timedelta
+        rt = self._runtime(settle_minutes=30)
+        st = rt.status()
+        check = {"last_check": {"at": self.pkg.sd_status._now().isoformat(), "checks": []}}
+        ahead = (self.pkg.sd_status._now() + timedelta(minutes=20)).isoformat()
+        behind = (self.pkg.sd_status._now() - timedelta(minutes=5)).isoformat()
+        self.assertIn("A copy is due at", st.line({**check, "settle_due": ahead}))
+        past = st.line({**check, "settle_due": behind})
+        self.assertNotIn("A copy is due at", past)
+        self.assertIn("waits for the next session start", past)
+
     def test_the_clock_is_a_daemon_so_a_short_session_is_not_held_open(self):
         rt = self._runtime(settle_minutes=30)
         self._write("x\n")

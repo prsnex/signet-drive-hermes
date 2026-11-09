@@ -307,6 +307,25 @@ class MirrorCase(unittest.TestCase):
         self.assertTrue(self.mirror.restore(foreign, yes=True)["applied"])
         self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ from the other Mac\n")
 
+    def test_case_9_a_planted_point_naming_another_file_under_memories_is_refused(self):
+        self.mirror.run_pass("session_start")
+        # a point built by hand, as a stranger with write access could: a manifest and member the mirror never makes
+        planted = self.home / "planted.txt"; planted.write_text("not a memory file\n")
+        stamp = M.new_stamp(self.clock())
+        local = {"memories/notes.txt": M.Tracked("memories/notes.txt", planted, planted.stat().st_size, M.sha256_file(planted)),
+                 "memories/MEMORY.md": M.Tracked("memories/MEMORY.md", self.home / "memories" / "MEMORY.md", 1, M.sha256_file(self.home / "memories" / "MEMORY.md"))}
+        manifest = M.Manifest(stamp=stamp, created_at=self.clock().isoformat(),
+                              entries={rel: {"sha256": t.sha256, "size": t.size} for rel, t in local.items()})
+        tmp = self.tmp / "planted.tar.gz"
+        M._write_bundle(tmp, manifest, local)
+        self.client.file_upload(f"Memory Mirror/{M.point_name(stamp)}", tmp)
+        out = self.mirror.restore(stamp, yes=True)
+        self.assertFalse(out["applied"], out)
+        self.assertEqual(out["files"], ["memories/notes.txt"])
+        self.assertFalse((self.home / "memories" / "notes.txt").exists())
+        self.assertEqual(len(self.points()), 2, "the first point and the planted one, and no undo point for a refused restore")
+        self.assertFalse(any(e.get("kind") == "pre_restore" for e in self.mirror.index().values()))
+
     # ---- the ceiling
     def _points_over(self, days, per_day=1):
         """Make one point a day (or more) going back `days` days from T0, through the mirror."""

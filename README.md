@@ -53,7 +53,7 @@ Three blocks, each finished before the next.
 
 **2. Hermes.** In Hermes Desktop, open Capabilities and then Plugins. Install Signet Drive from the catalog with one click, or, until it is listed there, choose Install plugin, then Install from Git, and give the repository `https://github.com/prsnex/signet-drive-hermes`. Both halves are on when it installs, the agent half and the Desktop half with the status item; the Desktop half can be turned off there. Restart Hermes when it asks. From a terminal the same is `hermes plugins install prsnex/signet-drive-hermes`, then `hermes plugins enable signet-drive`, then `hermes gateway restart`.
 
-**3. Connect the two.** On your account page, open PRSN Accounts, choose Add account and then Natively on this Mac. The page shows a one-time code and waits. In the Hermes chat, type `/signet setup` followed by that code, and approve the enrolment on your account page with your passkey. The plugin narrates the rest and ends with the first check and the first copy. From a terminal the same is `hermes signet-drive setup` with the code.
+**3. Connect the two.** On your account page, open PRSN Accounts, choose Add account, name your agent and choose what it may share, then choose Natively on this Mac. The page shows a one-time code and waits. In the Hermes chat, type `/signet setup` followed by that code, and approve the enrolment on your account page with your passkey. The plugin narrates the rest and ends with the first check and the first copy. From a terminal the same is `hermes signet-drive setup` with the code.
 
 Everything after that is automatic.
 
@@ -67,7 +67,7 @@ Everything after that is automatic.
 - Your agent's keys live in this Mac's Secure Enclave. Keys made with Signet 1.2.0 or later work once the Mac has been unlocked after it started, so copies continue while the screen is locked. Keys made with an earlier client work only while the Mac is unlocked, and copies pause when it locks and resume when you unlock it.
 - Every 30 days you re-confirm your agent's access on your account page. You are warned from 7 days before. If you miss the day, the copies pause, your agent can still read for 7 more days, and then its access stops until you re-confirm.
 - If your plan lapses, your account turns read-only for a time and is then deleted. If a free trial ends without an upgrade, the account is deleted. Either way your agent's account and everything in its drive go with yours.
-- Your agent can restore its memory on this Mac. On a new Mac it is a new account, and you give it the old folder by steps we describe.
+- Your agent can restore its memory on this Mac. On a new Mac it is a new account, and the old agent's copies stay in its folder, which you can open from your own account.
 
 
 ## What it never does

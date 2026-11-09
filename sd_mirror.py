@@ -659,6 +659,11 @@ class Mirror:
                 return {"applied": False, "needs_yes": True, "origin": plan.origin,
                         "memory": plan.memory_changes}
             to_write = plan.memory_changes
+            # A point can hold only the two memory files, so a planted point naming anything else
+            # under memories/ is refused before the present state is saved (Bob, case 9, 2026-11-08).
+            foreign = [rel for rel in to_write if rel not in {f"memories/{n}" for n in MEMORY_FILES}]
+            if foreign:
+                return {"applied": False, "refused": "the point names files the mirror never copies", "files": foreign, "origin": plan.origin}
             if not to_write:
                 return {"applied": True, "written": [], "origin": plan.origin, "note": "already at that point"}
             known = self.index().get(manifest.stamp)
@@ -705,7 +710,7 @@ class Mirror:
 
     def _local_path(self, rel: str) -> Path:
         _safe_rel(rel)
-        if rel.startswith("memories/"):
+        if rel in {f"memories/{n}" for n in MEMORY_FILES}:
             return self.hermes_home / "memories" / rel[len("memories/"):]
         raise ValueError(f"unexpected path in manifest: {rel}")
 

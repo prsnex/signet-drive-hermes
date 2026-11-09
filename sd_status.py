@@ -165,6 +165,13 @@ def _short_error(err: str) -> str:
     return head[1].strip() if len(head) > 2 and head[0].startswith("SignetError") else e[:60]
 
 
+def _is_ahead(iso: str) -> bool:
+    try:
+        return datetime.fromisoformat(iso) > _now()
+    except (ValueError, TypeError):
+        return False
+
+
 def _clock(iso: str) -> str:
     """A future instant as local wall-clock time."""
     try:
@@ -394,7 +401,12 @@ class Status:
             parts.append(f"Last mirror {_when(last.get('at', ''))}, {last.get('line', '')}")
         due = s.get("settle_due")
         if due:
-            parts.append(f"A copy is due at {_clock(due)}.")   # the settle clock is running on a change
+            # The clock lives in one process. If that process is gone, the due time passes with
+            # nothing saved and the start pass saves the change (Bob, case 35, 2026-11-08).
+            if _is_ahead(due):
+                parts.append(f"A copy is due at {_clock(due)}.")
+            else:
+                parts.append("A change waits for the next session start to be saved.")
         err = s.get("last_error")
         if err and (not last or str(s.get("last_error_at", "")) > str(last.get("at", ""))):
             parts.append(f"Last attempt failed, {_short_error(err)}.")
