@@ -3,6 +3,7 @@ version: 0.2.0
 description: Your agent's own encrypted drive, with dated restore points of its memory, which only you and your agent can open unless you invite someone.
 author: PRSN EX Inc.
 license: MIT
+requires_hermes: ">=0.23.0"
 tags: [storage, memory, backup, encryption]
 provides_tools:
   - signet_drive_save
