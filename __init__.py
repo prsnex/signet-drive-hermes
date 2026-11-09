@@ -12,6 +12,7 @@ import os
 import re
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -37,7 +38,7 @@ def _timer(delay_s: float, fn, *args) -> threading.Timer:
 sd_mirror.SignetError = _SignetError
 
 PLUGIN_ID = "signet-drive"
-MEMORY_TOOLS = {"memory", "skill_manage"}
+MEMORY_TOOLS = {"memory"}     # the tool that writes the two memory files; skills are not copied
 logger = logging.getLogger(__name__)
 
 
@@ -71,7 +72,9 @@ class Runtime:
             "handle": ctx.get_config("handle", default="") or None,
             "root_name": ctx.get_config("root_name", default="Memory Mirror"),
             "files_folder": ctx.get_config("files_folder", default="Files"),
-            "include_skills": bool(ctx.get_config("include_skills", default=True)),
+            # Settle, then save (Chris, 2026-11-08 evening): a memory change starts this clock, a
+            # further change resets it, and the point is made when it runs out.
+            "settle_minutes": float(ctx.get_config("settle_minutes", default=30)),
             # The log's maximum merge delay as the Log Spec declares it (24 h at v1.1.x). The server
             # publishes it on no endpoint a plugin can read, so it is a setting named for its source.
             "mmd_hours": float(ctx.get_config("mmd_hours", default=24)),
@@ -94,7 +97,7 @@ class Runtime:
 
     def mirror(self) -> sd_mirror.Mirror:
         return sd_mirror.Mirror(self.client(), _hermes_home(), _data_dir(),
-                                root_name=self.cfg["root_name"], include_skills=self.cfg["include_skills"],
+                                root_name=self.cfg["root_name"],
                                 prune=self.cfg["prune"],
                                 keep_days=self.cfg["keep_days"])
 
@@ -109,7 +112,8 @@ class Runtime:
             m.ensure_root()
             result = m.run_pass(reason)
             st.record_pass(result)
-            if result.status in ("in_step", "uploaded", "pending"):
+            st.write(settle_due=None)                 # the clock this pass answered, if any
+            if result.status in ("in_step", "uploaded"):
                 st.write(last_error=None)
             self._broadcast()
         except sd_mirror.MirrorBusy:
@@ -143,16 +147,50 @@ class Runtime:
         if join_s:
             t.join(join_s)
 
-    def schedule_pass(self, reason: str, delay_s: float = 2.0) -> None:
-        """Coalesce writes that arrive close together into one pass. The timer is not a
-        daemon, so a session that ends a moment after a memory write still completes
-        its pass before the process goes (a short CLI session showed the daemon form lost it)."""
+    def schedule_pass(self, reason: str, delay_s: Optional[float] = None) -> None:
+        """Settle, then save. A memory change starts the clock, a further change resets it,
+        and one pass runs when it runs out, so a burst of edits is one upload of the final
+        state. The timer is a daemon: a process that ends first (a short CLI session) must
+        not be held open for the settle time, and the pass at the next start saves the
+        change instead. The due time is written to the status so the line can say it."""
+        if delay_s is None:
+            delay_s = max(0.0, self.cfg["settle_minutes"]) * 60.0
         with self._debounce_lock:
             if self._debounce is not None:
                 self._debounce.cancel()
             self._debounce = _timer(delay_s, self.run_pass, reason)
-            self._debounce.daemon = False
+            self._debounce.daemon = True
             self._debounce.start()
+        try:
+            due = sd_status._now() + timedelta(seconds=delay_s)
+            self.status().write(settle_due=due.isoformat())
+        except Exception:
+            pass
+
+    def settle_pending(self) -> bool:
+        with self._debounce_lock:
+            return self._debounce is not None and self._debounce.is_alive()
+
+    def schedule_if_changed(self, reason: str) -> bool:
+        """At a session's end: if the memory files differ from the newest point and no clock is
+        running, start one. A local comparison, no network. In Hermes Desktop a session ends
+        after every turn, so this must cost nothing and must not reset a running clock."""
+        if self.settle_pending():
+            return False
+        try:
+            m = self.mirror()
+            local = sd_mirror.scan(_hermes_home())
+            latest = m.latest_point()
+            prev = latest.entries if latest else {}
+            changed = any(prev.get(rel, {}).get("sha256") != t.sha256 for rel, t in local.items()) \
+                or any(rel not in local for rel in prev)
+        except Exception as e:
+            logger.info("signet-drive: could not compare memory to the newest point (%s): %s", reason, e)
+            return False
+        if changed and local:
+            self.schedule_pass(reason)
+            return True
+        return False
 
     def _broadcast(self) -> None:
         try:
@@ -173,10 +211,9 @@ def register(ctx):
         rt.in_background(rt.start)
 
     def on_session_end(session_id=None, **kwargs):
-        # Inside the hook, not on a thread: Hermes bounds a hook at 30 s and a pass of a few
-        # files takes seconds, and a thread would die with a session that ends at once.
-        logger.info("signet-drive: session end (%s), pass now", session_id)
-        rt.run_pass("session_end")
+        # Hermes Desktop ends a session after every turn, so this is not a save point: it only
+        # starts the settle clock when the files differ from the newest point and no clock runs.
+        rt.schedule_if_changed("session_end")
 
     def post_tool_call(tool_name=None, args=None, result=None, **kwargs):
         if tool_name in MEMORY_TOOLS:
@@ -314,13 +351,13 @@ def _plain_words(rt: Runtime) -> list:
     the end of a terminal setup and by `/signet about` at any time."""
     days = rt.cfg["keep_days"]
     lines = ["What happens from here.",
-             f"1. Copies of your agent's memory and skills go to a folder in its drive called {rt.cfg['root_name']} after every change, one dated file per day.",
+             f"1. Copies of your agent's memory go to a folder in its drive called {rt.cfg['root_name']}, saved about {int(rt.cfg['settle_minutes'])} minutes after the agent stops changing it, one dated file per day.",
              f"2. Copies from the last {days} days are kept. The newest is never removed."]
     if rt.cfg["prune"]:
         lines.append("3. The plugin removes only its own older copies. It never touches a file you renamed or anything it did not make.")
     else:
         lines.append("3. The plugin removes nothing on its own. The status line counts the older copies waiting, and you can turn pruning on.")
-    lines += ["4. Memory means the agent's two memory files and its own skills, never your conversations.",
+    lines += ["4. Memory means the agent's two memory files, never your conversations and not its skills.",
               "5. Before a restore the present state is saved first, so a restore can be undone.",
               "6. The agent's keys live only in this Mac's Secure Enclave.",
               "7. What your agent saves counts against your storage.",

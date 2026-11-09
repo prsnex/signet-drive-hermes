@@ -4,7 +4,7 @@ Signet Drive delivers post-quantum encrypted cloud storage for humans and their 
 
 The Signet Drive plugin for Hermes brings secure cloud storage directly into your Hermes Agent and Hermes Desktop experience.
 
-The plugin also provides a special service that automatically backs up copies of your AI agent's memory and skills files, to protect against loss.
+The plugin also provides a special service that automatically backs up copies of your AI agent's memory files, to protect against loss.
 
 Your agent's Signet Drive account is its own. Only you and your agent can open it. Your agent gets four tools within the plugin, to save, fetch, list and restore, and a status item in Hermes Desktop says whether its drive is in step.
 
@@ -38,7 +38,7 @@ Today Signet Drive supports AI agents operating via local Apple-silicon Macs. Wi
 
 **A place for your agent's files.** Four tools, to save, fetch, list and restore. Saves go into a folder called Files and never overwrite. The four are a deliberately small set, so a tool call can never remove anything. The full Signet Drive command set, delete and sharing within the capability you give it included, stays available to your agent through the Signet app's command line, as for any agent using Signet Drive natively.
 
-**Backup copies of your agent's memory.** After every change your agent makes to its memory or its own skills, the plugin saves them into a folder of its drive called Memory Mirror, as one dated file, and the day's file is replaced each time. It keeps one file per day for nine days, and one more for nine days after a restore, and it removes only its own older copies, so the folder never grows without end. Your agent can restore any of those copies on the same Mac, and the plugin saves the present state first so a restore can be undone.
+**Backup copies of your agent's memory.** When your agent changes its memory, the plugin waits until the agent has made no further change for 30 minutes, then saves its two memory files into a folder of its drive called Memory Mirror as one dated file, and the day's file is replaced each time. A day with no change makes no copy, and the newest copy is always kept. It keeps one file per day for nine days, and one more for nine days after a restore, and it removes only its own older copies, so the folder never grows without end. Your agent can restore any of those copies on the same Mac, and the plugin saves the present state first so a restore can be undone.
 
 **A status item in Hermes Desktop.** A few words are always in the status bar, such as Drive in step, Drive behind or Drive needs you. A click opens a view of the agent's files and its restore points, to read and not to change, with a button that opens your own drive in the browser.
 
@@ -62,12 +62,12 @@ Everything after that is automatic.
 
 - You can see your agent's files and memory copies in your own drive, and deleting one is permanent.
 - What your agent saves counts against your storage.
-- Your agent's memory here means its two memory files and its own skills, never your conversations.
+- Your agent's memory here means its two memory files, never your conversations and not its skills.
 - Your agent keeps one memory file per day for nine days in its drive, ten files at most and one more for nine days after a restore, and removes its own older ones. A file you rename it never touches.
 - Your agent's keys live in this Mac's Secure Enclave. Keys made with Signet 1.2.0 or later work once the Mac has been unlocked after it started, so copies continue while the screen is locked. Keys made with an earlier client work only while the Mac is unlocked, and copies pause when it locks and resume when you unlock it.
 - Every 30 days you re-confirm your agent's access on your account page. You are warned from 7 days before. If you miss the day, the copies pause, your agent can still read for 7 more days, and then its access stops until you re-confirm.
 - If your plan lapses, your account turns read-only for a time and is then deleted. If a free trial ends without an upgrade, the account is deleted. Either way your agent's account and everything in its drive go with yours.
-- Your agent can restore its memory and skills on this Mac. On a new Mac it is a new account, and you give it the old folder by steps we describe.
+- Your agent can restore its memory on this Mac. On a new Mac it is a new account, and you give it the old folder by steps we describe.
 
 
 ## What it never does
@@ -94,7 +94,7 @@ Under `plugins.entries.signet-drive.settings` in the profile's Hermes config.
 |---|---|---|
 | `keep_days` | 9 | The one retention number. One restore point per day is kept, a point older than this many days is removed, and the newest is always kept. |
 | `prune` | true | The mirror removes its own older points by the rule above. Off, it only counts what waits. |
-| `include_skills` | true | Copy the agent's own skills as well as its two memory files. |
+| `settle_minutes` | 30 | Settle, then save. A memory change starts this clock, a further change resets it, and one copy is made when it runs out. |
 | `root_name` | Memory Mirror | The folder that holds the copies. |
 | `files_folder` | Files | The folder the file tools use. |
 | `handle` | set by setup | The agent's Signet handle, named on every call. |
@@ -115,7 +115,7 @@ Nothing else.
 | File | What it does |
 |---|---|
 | `plugin.yaml` | The manifest. Four tools, three hooks, the settings. |
-| `__init__.py` | Registration. The hooks at session start, after each memory or skill write and at session end, the tools, the `/signet` command and `hermes signet-drive setup`. All work runs off the agent's thread, with the profile's context carried onto every thread the plugin starts. |
+| `__init__.py` | Registration. The hooks at session start, after each memory write and at session end, which start the settle clock, the tools, the `/signet` command and `hermes signet-drive setup`. All work runs off the agent's thread, with the profile's context carried onto every thread the plugin starts. |
 | `signet_cli.py` | Runs the Signet app and reads its JSON output and exit codes. |
 | `sd_status.py` | The check at every start and the status line. |
 | `sd_mirror.py` | The Memory Mirror. One file per restore point, one point per day, nine days back, the undo point before a restore, the mirror removing only its own retired points by exact name. |

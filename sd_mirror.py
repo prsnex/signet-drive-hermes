@@ -1,21 +1,23 @@
-"""The Memory Mirror: dated restore points of an agent's memory files and its
-own skills in its Signet Drive, and a restore for the same Mac.
+"""The Memory Mirror: dated restore points of an agent's two memory files in its
+Signet Drive, and a restore for the same Mac.
 
 The drive holds one share folder, by default "Memory Mirror", and in it only
 files, one per restore point:
 
-  memory-<stamp>.tar.gz    everything the mirror tracks at that moment (the two
-                           memory files, the agent's own skills) and a
+  memory-<stamp>.tar.gz    the two memory files as they stood at that moment and a
                            manifest.json naming every member's sha256
 
 A point is a single upload, so an interrupted one leaves no file and can never
 be chosen. There are no folders under the root, so a human looking at the
 drive sees a short list of dated files and nothing else (Chris, 2026-11-07).
 
-Fewer points. A pass runs at session start, after each memory or skill write
-and at session end, but a new point is made only when something changed and
-either the session is ending, the human asked, or the newest point is older
-than the interval (one hour by default). Writes inside a session coalesce.
+Settle, then save (Chris, 2026-11-08 evening). A memory change starts a clock of
+`settle_minutes` (30 by default) and a further change resets it; when it runs out,
+one pass makes one point holding the final state, so a burst of edits is one upload.
+A pass also runs at session start, so a change the clock never saved because the
+process ended first is saved at the next start. A pass makes a point only when
+something changed: a quiet day makes none, and the newest point is always kept.
+The runtime owns the clock (`Runtime.schedule_pass`); this module only reconciles.
 
 A ceiling (Chris, 2026-11-07): one file per day, nine days back, the newest
 never removed. Within a day the newer point replaces the older, so the folder
@@ -44,8 +46,7 @@ A restore downloads one point, checks every member's sha256 against the
 manifest inside it and, for a point this Mac made, the whole file against the
 hash recorded at upload, and only then writes the files. Before it writes
 anything it makes a point of its own, so the state being replaced is itself a
-restore point. Skills are code, so a restore that would add or change a skill
-is listed first and applied only on a yes.
+restore point. A point this Mac did not make is listed first and applied only on a yes.
 """
 from __future__ import annotations
 
@@ -73,14 +74,12 @@ POINT_PREFIX = "memory-"
 POINT_SUFFIX = ".tar.gz"
 STAMP_RE = re.compile(r"(\d{8}T\d{6}Z-[0-9a-f]{6})")
 MANIFEST_MEMBER = "manifest.json"
-# Reasons that make a point at once when something changed, interval or not.
-FORCE_REASONS = {"session_end", "command", "cli", "accepted removal", "pre_restore"}
 
 
 # ---------------------------------------------------------------- local side
 @dataclass(frozen=True)
 class Tracked:
-    rel: str          # "memories/MEMORY.md" or "skills/<name>/SKILL.md"
+    rel: str          # "memories/MEMORY.md" or "memories/USER.md"
     local: Path
     size: int
     sha256: str
@@ -94,70 +93,20 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def hermes_lists(skills_dir: Path) -> tuple[set[str], set[str]]:
-    """The skill names Hermes itself installed: bundled, and from its hub.
+def scan(hermes_home: Path) -> dict[str, Tracked]:
+    """The two memory files, keyed by their relative path in a point.
 
-    Formats as the installed Hermes (v0.23.0) writes them: `.bundled_manifest`
-    is one `name:hash` per line (older files carry plain names), and
-    `.hub/lock.json` is `{"version": 1, "installed": {name: {...}}}`
-    (`tools/skills_sync.py`, `tools/skills_hub.py`). Both are read
-    defensively: a missing or unreadable list reads as empty, which errs
-    toward copying more, never less.
+    Skills are not copied (Chris, 2026-11-08 evening). They are the whole of a point's
+    size and so the whole of its cost, most of them are Hermes's own and reinstall from
+    where they came, and the memory files are capped by Hermes at a few kilobytes.
+    Copying skills is an option for later if the plugin finds its users.
     """
-    bundled: set[str] = set()
-    hub: set[str] = set()
-    try:
-        for line in (skills_dir / ".bundled_manifest").read_text(encoding="utf-8", errors="replace").splitlines():
-            name = line.split(":", 1)[0].strip()
-            if name and not name.startswith("#"):
-                bundled.add(name)
-    except OSError:
-        pass
-    try:
-        data = json.loads((skills_dir / ".hub" / "lock.json").read_text(encoding="utf-8-sig", errors="replace"))
-        installed = data.get("installed") if isinstance(data, dict) else None
-        if isinstance(installed, dict):
-            hub = {str(k) for k in installed.keys()}
-    except (OSError, ValueError):
-        pass
-    return bundled, hub
-
-
-def own_skill_dirs(skills_dir: Path) -> list[Path]:
-    """The agent's own skills: every skill folder neither of Hermes's lists names.
-
-    A bundled skill the agent has edited is not copied by this rule. That is
-    an open question in the design, said plainly in the README.
-    """
-    if not skills_dir.is_dir():
-        return []
-    bundled, hub = hermes_lists(skills_dir)
-    out = []
-    for child in sorted(skills_dir.iterdir()):
-        if not child.is_dir() or child.name.startswith("."):
-            continue
-        if child.name in bundled or child.name in hub:
-            continue
-        if (child / "SKILL.md").exists():
-            out.append(child)
-    return out
-
-
-def scan(hermes_home: Path, include_skills: bool = True) -> dict[str, Tracked]:
-    """Every file the mirror tracks, keyed by its relative path in a point."""
     tracked: dict[str, Tracked] = {}
     mem = hermes_home / "memories"
     for name in MEMORY_FILES:
         p = mem / name
         if p.is_file():
             tracked[f"memories/{name}"] = Tracked(f"memories/{name}", p, p.stat().st_size, sha256_file(p))
-    if include_skills:
-        skills = hermes_home / "skills"
-        for d in own_skill_dirs(skills):
-            for p in sorted(d.rglob("*")):
-                if p.is_file() and not p.name.startswith(".") and "__pycache__" not in p.parts:
-                    rel = "skills/" + p.relative_to(skills).as_posix()
-                    tracked[rel] = Tracked(rel, p, p.stat().st_size, sha256_file(p))
     return tracked
 
 
@@ -225,14 +174,13 @@ def _parse_time(text: str) -> datetime:
 # --------------------------------------------------------------- the result
 @dataclass
 class PassResult:
-    status: str                 # in_step | uploaded | pending | needs_you | behind | refused | error
+    status: str                 # in_step | uploaded | needs_you | behind | refused | error
     stamp: Optional[str] = None
     uploaded: list = field(default_factory=list)   # the rel paths the point holds
     missing: list = field(default_factory=list)
     reason: str = ""
     error: Optional[str] = None
     pruned: list = field(default_factory=list)      # point names removed by the ceiling at this pass
-    next_point_at: str = ""
     retirable: int = 0                              # points the ceiling would remove, when thinning is off
     others: int = 0                                 # point files in the folder this plugin did not make or has lost by rename
     undo: int = 0                                   # restores' undo points kept beside the day's point
@@ -251,9 +199,6 @@ class PassResult:
             if self.pruned:
                 s += f" {len(self.pruned)} retired point(s) removed."
             return s + self._tail()
-        if self.status == "pending":
-            when = self.next_point_at[11:16] + "Z" if len(self.next_point_at) >= 16 else "the interval's end"
-            return f"Mirror in step. Changes wait for the next point at {when} or at the session's end."
         if self.status == "needs_you":
             return (f"Drive needs you. {len(self.missing)} file(s) the last point held are missing "
                     f"locally: {', '.join(self.missing[:3])}{'…' if len(self.missing) > 3 else ''}. "
@@ -279,11 +224,10 @@ class RestorePlan:
     name: str                  # the point's file name in the drive
     origin: str                # "this Mac" when the point is in this plugin's own index, else "unknown"
     memory_changes: list       # rel paths of memory files that would change
-    skill_changes: list        # rel paths under skills/ that would be added or changed
     unchanged: list
 
     def needs_yes(self) -> bool:
-        return bool(self.skill_changes) or self.origin != "this Mac"
+        return self.origin != "this Mac"
 
 
 class MirrorBusy(Exception):
@@ -293,14 +237,13 @@ class MirrorBusy(Exception):
 # ------------------------------------------------------------------ the mirror
 class Mirror:
     def __init__(self, client: SignetClient, hermes_home: Path, data_dir: Path,
-                 root_name: str = "Memory Mirror", include_skills: bool = True,
+                 root_name: str = "Memory Mirror",
                  prune: bool = True, keep_days: int = 9,
                  now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
         self.client = client
         self.hermes_home = Path(hermes_home)
         self.data_dir = Path(data_dir)
         self.root_name = root_name
-        self.include_skills = include_skills
         self.prune = bool(prune)
         self.keep_days = int(keep_days)        # a point older than this many days is removed; one point per day is kept
         self.now = now
@@ -398,10 +341,8 @@ class Mirror:
     def run_pass(self, reason: str = "trigger", kind: str = "pass", note: str = "") -> PassResult:
         """One reconcile. Thread-safe: a second caller while one runs gets MirrorBusy."""
         if not self._lock.acquire(blocking=False):
-            # The running pass scanned before this caller's change: ask it to scan once more at its
-            # end, so a write that arrives during an upload lands in the day's point instead of
-            # waiting for the next trigger (Bob, case 11 at 4c84361, 2026-11-08).
-            self._rerun_wanted = True
+            # A write that arrives during a pass is not this pass's to catch: the runtime's settle
+            # clock restarts on every change and a later pass takes it (Bob, case 11, 2026-11-08).
             raise MirrorBusy("a pass is already running")
         # A second lock across processes: the gateway and a CLI session are two (Bob, run 1, case 11).
         lock_path = self.data_dir / "pass.lock"
@@ -412,12 +353,7 @@ class Mirror:
             except OSError:
                 raise MirrorBusy("a pass is already running in another process")
             try:
-                self._rerun_wanted = False
-                result = self._pass(reason, kind, note)
-                if getattr(self, "_rerun_wanted", False) and kind == "pass":
-                    self._rerun_wanted = False
-                    result = self._pass(reason + ", rerun for a change that arrived meanwhile", kind, note)
-                return result
+                return self._pass(reason, kind, note)
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         finally:
@@ -433,7 +369,7 @@ class Mirror:
             self.reconcile_index()
         except SignetError:
             pass                                 # the folder did not answer; the pass itself says so below
-        local = scan(self.hermes_home, self.include_skills)
+        local = scan(self.hermes_home)
         latest = self.latest_point()
         prev = latest.entries if latest else {}
         accepted = set(self.state().get("accepted_missing", []))
@@ -469,9 +405,8 @@ class Mirror:
                              last_reason=reason, missing=missing)
             return PassResult("needs_you", missing=missing)
 
-        # Every change makes a point, and the day's newer point replaces the older (Chris, 2026-11-08:
-        # Hermes Desktop ends a session after every turn, so v06's hourly limit could never apply there,
-        # and a backup that saves every change is the better promise; the ceiling keeps the folder small).
+        # Something changed, so a point is made and the day's newer point replaces the older. The
+        # pacing is the runtime's settle clock, not this module's (Chris, 2026-11-08 evening).
 
         stamp = new_stamp(started)
         name = point_name(stamp, kind)
@@ -702,21 +637,19 @@ class Mirror:
         return self._plan(manifest, name)
 
     def _plan(self, manifest: Manifest, name: str) -> RestorePlan:
-        local = scan(self.hermes_home, self.include_skills)
-        mem, sk, same = [], [], []
+        local = scan(self.hermes_home)
+        mem, same = [], []
         for rel, entry in sorted(manifest.entries.items()):
             if local.get(rel) and local[rel].sha256 == entry["sha256"]:
                 same.append(rel)
-            elif rel.startswith("skills/"):
-                sk.append(rel)
             else:
                 mem.append(rel)
         origin = "this Mac" if manifest.stamp in self.index() else "unknown"
-        return RestorePlan(manifest, name, origin, mem, sk, same)
+        return RestorePlan(manifest, name, origin, mem, same)
 
     def restore(self, stamp: str, yes: bool = False) -> dict:
-        """Apply one point. Returns what was written. Refuses, with the plan, when a
-        skill would change or the point is not one this Mac made, and `yes` is False."""
+        """Apply one point. Returns what was written. Refuses, with the plan, when the
+        point is not one this Mac made and `yes` is False."""
         name = self._name_for(stamp)
         manifest, bundle = self._read_point(name, keep=True)
         assert bundle is not None
@@ -724,8 +657,8 @@ class Mirror:
             plan = self._plan(manifest, name)
             if plan.needs_yes() and not yes:
                 return {"applied": False, "needs_yes": True, "origin": plan.origin,
-                        "skills": plan.skill_changes, "memory": plan.memory_changes}
-            to_write = plan.memory_changes + plan.skill_changes
+                        "memory": plan.memory_changes}
+            to_write = plan.memory_changes
             if not to_write:
                 return {"applied": True, "written": [], "origin": plan.origin, "note": "already at that point"}
             known = self.index().get(manifest.stamp)
@@ -774,8 +707,6 @@ class Mirror:
         _safe_rel(rel)
         if rel.startswith("memories/"):
             return self.hermes_home / "memories" / rel[len("memories/"):]
-        if rel.startswith("skills/"):
-            return self.hermes_home / "skills" / rel[len("skills/"):]
         raise ValueError(f"unexpected path in manifest: {rel}")
 
 

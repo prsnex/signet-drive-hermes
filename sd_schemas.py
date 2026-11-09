@@ -43,16 +43,16 @@ LIST = {
 RESTORE = {
     "name": "signet_drive_restore",
     "description": (
-        "Restore the agent's memory files and own skills from a dated copy in its Signet Drive, on this Mac. "
-        "With no stamp, lists the dated copies. With a stamp, shows what would change. A restore that would add "
-        "or change a skill applies only with yes=true, since skills are code. The present state is saved first. "
+        "Restore the agent's two memory files from a dated copy in its Signet Drive, on this Mac. "
+        "With no stamp, lists the dated copies. With a stamp, shows what would change. A copy this Mac did not "
+        "make applies only with yes=true, since its contents are of unknown origin. The present state is saved first. "
         "Hermes reads its memory files when a session starts, so a restore shows in the next session."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "stamp": {"type": "string", "description": "The dated copy to restore, from the list."},
-            "yes": {"type": "boolean", "description": "Apply a restore that changes skills. Default false."},
+            "yes": {"type": "boolean", "description": "Apply a restore from a copy this Mac did not make. Default false."},
         },
     },
 }

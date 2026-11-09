@@ -199,12 +199,8 @@ def make_handlers(client_factory: Callable[[], SignetClient], files_name: str,
             stamp = found
             out = m.restore(stamp, yes=bool(args.get("yes")))
             if out.get("needs_yes"):
-                why = []
-                if out.get("skills"):
-                    why.append("these skills would be added or changed, and skills are code")
-                if out.get("origin") != "this Mac":
-                    why.append("this point was not made by the plugin on this Mac, so its contents are data of unknown origin")
-                out["note"] = "Refused for now: " + "; ".join(why) + ". Tell your human, and call again with yes=true to apply."
+                out["note"] = ("Refused for now. This point was not made by the plugin on this Mac, so its contents are data "
+                               "of unknown origin. Tell your human, and call again with yes=true to apply.")
             return json.dumps(out)
         except sd_mirror.MirrorBusy:
             return _err("busy", "A mirror pass is running. Try again in a moment.")

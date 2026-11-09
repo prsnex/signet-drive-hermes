@@ -165,6 +165,14 @@ def _short_error(err: str) -> str:
     return head[1].strip() if len(head) > 2 and head[0].startswith("SignetError") else e[:60]
 
 
+def _clock(iso: str) -> str:
+    """A future instant as local wall-clock time."""
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime("%H:%M")
+    except (ValueError, TypeError):
+        return "?"
+
+
 def _when(iso: str) -> str:
     """'11:14' today; otherwise the age, so an old check never reads as fresh (Bob, run 1, case 4)."""
     try:
@@ -384,6 +392,9 @@ class Status:
             parts.append("Drive reachable.")
         if last:
             parts.append(f"Last mirror {_when(last.get('at', ''))}, {last.get('line', '')}")
+        due = s.get("settle_due")
+        if due:
+            parts.append(f"A copy is due at {_clock(due)}.")   # the settle clock is running on a change
         err = s.get("last_error")
         if err and (not last or str(s.get("last_error_at", "")) > str(last.get("at", ""))):
             parts.append(f"Last attempt failed, {_short_error(err)}.")

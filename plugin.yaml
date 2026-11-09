@@ -1,6 +1,6 @@
 name: signet-drive
 version: 0.2.0
-description: Your agent's own encrypted drive, with dated restore points of its memory and skills, which only you and your agent can open unless you invite someone.
+description: Your agent's own encrypted drive, with dated restore points of its memory, which only you and your agent can open unless you invite someone.
 author: PRSN EX Inc.
 license: MIT
 tags: [storage, memory, backup, encryption]
@@ -32,10 +32,10 @@ config_schema:
     type: number
     default: 24
     description: The transparency log's maximum merge delay in hours, as the Log Spec declares it; past it an unpublished key is overdue.
-  include_skills:
-    type: boolean
-    default: true
-    description: Copy the agent's own skills as well as its two memory files.
+  settle_minutes:
+    type: number
+    default: 30
+    description: Settle, then save. A memory change starts this clock, a further change resets it, and one restore point is made when it runs out, so a burst of edits is one copy of the final state. A change the clock never saved is saved at the next session start.
   prune:
     type: boolean
     default: true

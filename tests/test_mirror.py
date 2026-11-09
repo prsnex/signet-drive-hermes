@@ -50,17 +50,11 @@ class MirrorCase(unittest.TestCase):
         (self.home / "memories").mkdir(parents=True)
         (self.home / "memories" / "MEMORY.md").write_text("§ first fact\n")
         (self.home / "memories" / "USER.md").write_text("§ the human\n")
+        # A skill of the agent's own, present so the tests prove it is NOT copied (Chris, 2026-11-08 evening).
         own = self.home / "skills" / "my-skill"
         (own / "scripts").mkdir(parents=True)
         (own / "SKILL.md").write_text("# my skill\n")
         (own / "scripts" / "run.sh").write_text("echo hi\n")
-        bundled = self.home / "skills" / "bundled-one"
-        bundled.mkdir()
-        (bundled / "SKILL.md").write_text("# bundled\n")
-        (self.home / "skills" / ".bundled_manifest").write_text("bundled-one:abc123\n")
-        hub = self.home / "skills" / ".hub"; hub.mkdir()
-        (hub / "lock.json").write_text(json.dumps({"version": 1, "installed": {"hub-one": {"content_hash": "x"}}}))
-        (self.home / "skills" / "hub-one").mkdir(); (self.home / "skills" / "hub-one" / "SKILL.md").write_text("# hub\n")
         self.store = self.tmp / "drive.json"
         self.env = {"SIGNET_FAKE_STORE": str(self.store)}
         self.data = self.tmp / "plugin-data"
@@ -99,19 +93,17 @@ class MirrorCase(unittest.TestCase):
         (self.home / "memories" / "MEMORY.md").write_text(text)
 
     # ---- the point
-    def test_first_point_bundles_everything_but_bundled_as_one_file(self):
+    def test_first_point_bundles_the_two_memory_files_and_no_skill_as_one_file(self):
         r = self.mirror.run_pass("session_start")
         self.assertEqual(r.status, "uploaded", r)
-        self.assertEqual(sorted(r.uploaded), ["memories/MEMORY.md", "memories/USER.md",
-                                              "skills/my-skill/SKILL.md", "skills/my-skill/scripts/run.sh"])
+        self.assertEqual(sorted(r.uploaded), ["memories/MEMORY.md", "memories/USER.md"])
         self.assertEqual(len(self.points()), 1)
         self.assertEqual(self.drive_files(), self.points(), "nothing but point files in the drive")
         self.assertEqual(self.drive()["folders"], {"Memory Mirror": self.drive()["folders"]["Memory Mirror"]},
                          "one folder, no folders under it")
         self.assertEqual(self.members(self.points()[0]),
-                         ["manifest.json", "memories/MEMORY.md", "memories/USER.md",
-                          "skills/my-skill/SKILL.md", "skills/my-skill/scripts/run.sh"])
-        self.assertFalse(any("bundled-one" in m or "hub-one" in m for m in self.members(self.points()[0])))
+                         ["manifest.json", "memories/MEMORY.md", "memories/USER.md"])
+        self.assertFalse(any(m.startswith("skills/") for m in self.members(self.points()[0])), "skills are not copied")
         m = self.mirror.latest_point()
         self.assertEqual(m.stamp, r.stamp)
         self.assertIn(r.stamp, self.mirror.index())
@@ -263,22 +255,6 @@ class MirrorCase(unittest.TestCase):
         self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ day 2\n")
         self.assertFalse((self.home / "memories" / "USER.md").exists(), "the day-2 point decides: USER.md stays gone")
         self.assertEqual(out["origin"], "this Mac")
-
-    def test_case_20_a_restore_that_changes_a_skill_waits_for_a_yes(self):
-        self.mirror = M.Mirror(self.client, self.home, self.data, prune=False, now=self.clock)   # restore semantics, not the ceiling
-        self.mirror.run_pass("session_start")
-        stamp = self.mirror.latest_point().stamp
-        (self.home / "skills" / "my-skill" / "SKILL.md").write_text("# changed\n")
-        self.clock.advance(hours=2)
-        self.mirror.run_pass("session_end")
-        out = self.mirror.restore(stamp)
-        self.assertFalse(out["applied"])
-        self.assertTrue(out["needs_yes"])
-        self.assertEqual(out["skills"], ["skills/my-skill/SKILL.md"])
-        self.assertEqual((self.home / "skills" / "my-skill" / "SKILL.md").read_text(), "# changed\n")
-        out = self.mirror.restore(stamp, yes=True)
-        self.assertTrue(out["applied"])
-        self.assertEqual((self.home / "skills" / "my-skill" / "SKILL.md").read_text(), "# my skill\n")
 
     def test_restore_saves_the_present_first_and_checks_every_hash(self):
         self.mirror = M.Mirror(self.client, self.home, self.data, prune=False, now=self.clock)
@@ -636,39 +612,6 @@ class EmptyProfileCase(unittest.TestCase):
             self.assertEqual(r.tracked, 0)
             self.assertIn("Nothing to copy yet", r.line())
             self.assertNotIn(";", r.line())
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-
-
-class ChangeDuringAPassCase(unittest.TestCase):
-    """A write that arrives while a pass runs is not dropped: the busy caller marks a rerun and the
-    running pass scans once more at its end (Bob's case 11 at 4c84361, 2026-11-08)."""
-
-    def test_a_change_during_a_pass_lands_in_the_days_point(self):
-        tmp = Path(tempfile.mkdtemp(prefix="sdr-"))
-        try:
-            home = tmp / "hermes"; (home / "memories").mkdir(parents=True)
-            (home / "memories" / "MEMORY.md").write_text("§ first\n")
-            client = SignetClient(binary=str(FAKE), handle="rerun-agent", extra_env={"SIGNET_FAKE_STORE": str(tmp / "drive.json")})
-            m = M.Mirror(client, home, tmp / "data")
-            original = m._pass
-            calls = []
-            def pass_with_a_write_meanwhile(reason, kind, note):
-                calls.append(reason)
-                result = original(reason, kind, note)          # the scan and the upload of what it saw
-                if len(calls) == 1:                            # then a write lands and a busy caller marks the rerun
-                    (home / "memories" / "MEMORY.md").write_text("§ first\n§ second, written during the upload\n")
-                    m._rerun_wanted = True
-                return result
-            m._pass = pass_with_a_write_meanwhile
-            r = m.run_pass("after memory")
-            self.assertEqual(len(calls), 2, calls)
-            self.assertIn("rerun", calls[1])
-            self.assertEqual(r.status, "uploaded")
-            newest = m.latest_point(refresh=True)
-            self.assertIsNotNone(newest)
-            self.assertEqual(newest.entries["memories/MEMORY.md"]["sha256"], M.sha256_file(home / "memories" / "MEMORY.md"),
-                             "the day's point holds the write that arrived during the first upload")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

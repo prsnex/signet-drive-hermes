@@ -212,7 +212,7 @@ class SetupCommandCase(StatusCase):
             def __init__(self): self.set = {}
             def set_config(self, k, v): self.set[k] = v
         class RT:
-            cfg = {"mmd_hours": 24, "keep_days": 9, "prune": True,
+            cfg = {"mmd_hours": 24, "keep_days": 9, "prune": True, "settle_minutes": 30,
                    "root_name": "Memory Mirror", "files_folder": "Files", "handle": "test-agent"}
             ctx = Ctx()
             started = 0
@@ -306,6 +306,105 @@ class SetupCommandCase(StatusCase):
         self.pkg._setup(rt, None, out=a.append)
         self.pkg._setup(rt, None, out=b.append)
         self.assertEqual(a, b)
+
+
+class SettleCase(StatusCase):
+    """Settle, then save (Chris, 2026-11-08 evening): a memory change starts the clock, a further
+    change resets it, one pass runs when it runs out, and a session's end only starts a clock
+    when the files differ from the newest point. The clock is the runtime's, so it is tested
+    here through a Runtime with a fake Hermes home and the fake client."""
+
+    def setUp(self):
+        super().setUp()
+        import os
+        self.home = self.tmp / "hermes"
+        (self.home / "memories").mkdir(parents=True)
+        self._env_before = {k: os.environ.get(k) for k in ("HERMES_HOME", "SIGNET_FAKE_STORE")}
+        os.environ["HERMES_HOME"] = str(self.home)            # _hermes_home() falls back to it outside Hermes
+        os.environ["SIGNET_FAKE_STORE"] = str(self.store)     # the fake client's drive, inherited by its process
+
+    def tearDown(self):
+        import os
+        for k, v in self._env_before.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        super().tearDown()
+
+    def _runtime(self, settle_minutes):
+        vals = {"binary": str(FAKE), "handle": "test-agent", "settle_minutes": settle_minutes}
+        class Ctx:
+            def get_config(self, key, default=None):
+                return vals.get(key, default)
+        return self.pkg.Runtime(Ctx())
+
+    def _write(self, text):
+        (self.home / "memories" / "MEMORY.md").write_text(text)
+
+    def _points(self):
+        d = json.loads(self.store.read_text()) if self.store.exists() else {"files": {}}
+        return sorted(p for p in d["files"] if p.startswith("Memory Mirror/") and p.endswith(".tar.gz"))
+
+    def _memory_in(self, point):
+        import tarfile
+        blob = bytes.fromhex(json.loads(self.store.read_text())["files"][point]["blob"])
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
+            return tar.extractfile("memories/MEMORY.md").read().decode()
+
+    def _settled(self, rt, limit_s=20.0):
+        import time
+        end = time.time() + limit_s
+        while time.time() < end:
+            if not rt.settle_pending() and rt.status().read().get("last_pass"):
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_a_burst_of_changes_is_one_point_holding_the_final_state(self):
+        import time
+        rt = self._runtime(settle_minutes=0.6 / 60)            # 0.6 s
+        self._write("one\n"); rt.schedule_pass("after memory")
+        time.sleep(0.3)
+        self._write("two\n"); rt.schedule_pass("after memory")    # resets the clock
+        self.assertTrue(rt.settle_pending())
+        self.assertTrue(rt.status().read().get("settle_due"))
+        self.assertIn("A copy is due at", rt.status().line({"last_check": {"at": "2026-01-01T00:00:00+00:00", "checks": []},
+                                                           "settle_due": rt.status().read()["settle_due"]}))
+        self.assertEqual(self._points(), [], "nothing is saved before the clock runs out")
+        self.assertTrue(self._settled(rt))
+        self.assertEqual(len(self._points()), 1, self._points())
+        self.assertEqual(self._memory_in(self._points()[0]), "two\n")
+        self.assertIsNone(rt.status().read().get("settle_due"))
+
+    def test_a_session_end_starts_the_clock_only_on_a_change_and_never_resets_a_running_one(self):
+        import time
+        rt = self._runtime(settle_minutes=0.5 / 60)
+        self._write("first\n")
+        rt.run_pass("session_start")
+        self.assertEqual(len(self._points()), 1)
+        self.assertFalse(rt.schedule_if_changed("session_end"), "in step: no clock")
+        self.assertFalse(rt.settle_pending())
+        self._write("changed\n")
+        self.assertTrue(rt.schedule_if_changed("session_end"))
+        due = rt.status().read()["settle_due"]
+        time.sleep(0.1)
+        self.assertFalse(rt.schedule_if_changed("session_end"), "a running clock is not reset by the next turn")
+        self.assertEqual(rt.status().read()["settle_due"], due)
+        rt.status().write(last_pass=None)
+        self.assertTrue(self._settled(rt))
+        self.assertEqual(len(self._points()), 1, "the day's newer point replaced the older")
+        self.assertEqual(self._memory_in(self._points()[0]), "changed\n")
+
+    def test_the_clock_is_a_daemon_so_a_short_session_is_not_held_open(self):
+        rt = self._runtime(settle_minutes=30)
+        self._write("x\n")
+        rt.schedule_pass("after memory")
+        try:
+            self.assertTrue(rt._debounce.daemon)
+            self.assertAlmostEqual(rt._debounce.interval, 1800.0)
+        finally:
+            rt._debounce.cancel()
 
 
 if __name__ == "__main__":
