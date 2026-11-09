@@ -6,7 +6,7 @@ The Signet Drive plugin for Hermes brings secure cloud storage directly into you
 
 The plugin also provides a special service that automatically backs up copies of your AI agent's memory files, to protect against loss.
 
-Your agent's Signet Drive account is its own. Only you and your agent can open it. Your agent gets four tools within the plugin, to save, fetch, list and restore, and a status item in Hermes Desktop says whether its drive is in step.
+Your agent's Signet Drive account is its own. Only you and your agent can open it, unless you invite someone. Your agent gets four tools within the plugin, to save, fetch, list and restore, and a status item in Hermes Desktop says whether its drive is in step.
 
 **What you need.** A Signet Drive account, created at https://drive.mysignet.ca. An Apple-silicon Mac with the signed Signet app from your account page. Hermes Agent 0.23.0, with Hermes Desktop if you want the status item.
 
