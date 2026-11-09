@@ -685,6 +685,20 @@ class Mirror:
             pre = self.run_pass(reason="pre_restore", kind="pre_restore", note=f"before restore to {stamp}")
             if pre.status not in ("in_step", "uploaded"):
                 return {"applied": False, "blocked_by": pre.line()}
+            undo_stamp = pre.stamp
+            if pre.status == "in_step":
+                # The newest point already holds the present, so no undo point was written and that
+                # point IS the undo. Marked as such in the index, the keep rule holds it outside the
+                # one-per-day rule for keep_days, else the day's next point would retire it and the
+                # replaced memory would be in no copy (Bob, run 5, case 30, 2026-11-08).
+                newest = self.latest_point()
+                if newest is not None:
+                    idx = self.index()
+                    if newest.stamp in idx:
+                        idx[newest.stamp]["kind"] = "pre_restore"
+                        idx[newest.stamp]["note"] = f"the undo for the restore to {stamp}"
+                        self._save_index(idx)
+                        undo_stamp = newest.stamp
             staged: list[tuple[Path, Path]] = []
             stage_dir = self.data_dir / f"restore-{stamp}"
             stage_dir.mkdir(parents=True, exist_ok=True)
@@ -708,7 +722,7 @@ class Mirror:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(tmp, dest)
                     written.append(dest.relative_to(self.hermes_home).as_posix())
-                return {"applied": True, "written": written, "pre_restore": pre.stamp, "origin": plan.origin, "ignored": plan.ignored,
+                return {"applied": True, "written": written, "pre_restore": undo_stamp, "origin": plan.origin, "ignored": plan.ignored,
                         "note": "Hermes reads its memory files when a session starts, so this shows in the next session."}
             finally:
                 for p in stage_dir.glob("*"):

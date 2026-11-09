@@ -493,19 +493,32 @@ class MirrorCase(unittest.TestCase):
         r = on.run_pass("session_end")
         self.assertGreater(len(r.pruned), 0, "the next point thins")
 
-    def test_a_restore_from_a_saved_state_makes_no_duplicate_point(self):
-        self.mirror = M.Mirror(self.client, self.home, self.data, prune=False, now=self.clock)
+    def test_case_30_a_restore_from_a_saved_state_keeps_the_newest_point_as_the_undo(self):
+        # Bob, run 5, case 30 (2026-11-08): when the present equals the newest point no undo point is
+        # written, so that point is the undo, and the day's next point must not retire it.
         self.mirror.run_pass("session_start")
         first = self.mirror.latest_point().stamp
-        self.clock.advance(hours=2)
+        self.clock.advance(days=1)
         self.write_memory("§ later\n")
         self.mirror.run_pass("session_end")
+        newest = self.mirror.latest_point().stamp
         n = len(self.points())
         out = self.mirror.restore(first)                  # the present equals the newest point already
         self.assertTrue(out["applied"], out)
-        self.assertIsNone(out.get("pre_restore"), "no pre-restore point when the newest point already holds the present")
+        self.assertEqual(out["pre_restore"], newest, "the newest point is the undo")
         self.assertEqual(len(self.points()), n, "no duplicate file")
         self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ first fact\n")
+        self.clock.advance(hours=1)
+        self.write_memory("§ after the restore\n")
+        r = self.mirror.run_pass("session_end")           # the same UTC day as the newest point
+        self.assertEqual(r.status, "uploaded", r)
+        names = [p.split("/")[1] for p in self.points()]
+        self.assertIn(M.point_name(newest), names, "the undo survives the day's next point")
+        self.assertEqual(len(names), 3, "the old point, the undo, the day's point")
+        self.assertEqual(self.mirror.undo_points(), 1)
+        back = self.mirror.restore(newest)
+        self.assertTrue(back["applied"], back)
+        self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ later\n", "the replaced memory is back")
 
     def test_a_pre_restore_point_does_not_thin_away_the_point_being_restored(self):
         on = M.Mirror(self.client, self.home, self.data, prune=True, now=self.clock)
