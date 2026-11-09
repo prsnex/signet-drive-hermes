@@ -326,6 +326,46 @@ class MirrorCase(unittest.TestCase):
         self.assertEqual(len(self.points()), 2, "the first point and the planted one, and no undo point for a refused restore")
         self.assertFalse(any(e.get("kind") == "pre_restore" for e in self.mirror.index().values()))
 
+    def test_a_skills_era_point_is_not_read_as_missing_and_restores_its_memory_only(self):
+        # A point as the tree before 2026-11-08 evening made it: both memory files and a skill,
+        # recorded as this Mac's newest point (Bob, run 5: the upgrade stopped the Mirror).
+        skill = self.home / "skills" / "my-skill" / "SKILL.md"
+        local = {rel: M.Tracked(rel, p, p.stat().st_size, M.sha256_file(p)) for rel, p in [
+            ("memories/MEMORY.md", self.home / "memories" / "MEMORY.md"),
+            ("memories/USER.md", self.home / "memories" / "USER.md"),
+            ("skills/my-skill/SKILL.md", skill)]}
+        stamp = M.new_stamp(self.clock())
+        manifest = M.Manifest(stamp=stamp, created_at=self.clock().isoformat(),
+                              entries={rel: {"sha256": t.sha256, "size": t.size} for rel, t in local.items()})
+        tmp = self.tmp / "old.tar.gz"
+        M._write_bundle(tmp, manifest, local)
+        name = M.point_name(stamp)
+        self.mirror.ensure_root()
+        self.client.file_upload(f"Memory Mirror/{name}", tmp)
+        idx = self.mirror.index()
+        idx[stamp] = {"name": name, "sha256": M.sha256_file(tmp), "size": tmp.stat().st_size,
+                      "created_at": manifest.created_at, "kind": "pass", "files": 3, "status": "uploaded"}
+        self.mirror._save_index(idx)
+        M._atomic_write(self.mirror._latest_path, manifest.to_json())
+        # the new code's first pass on that home: nothing is missing
+        r = self.mirror.run_pass("session_start")
+        self.assertEqual(r.status, "in_step", r)
+        self.assertEqual(r.missing, [])
+        # a real change the next day makes a point of the two memory files (the same day would replace the old point)
+        self.clock.advance(hours=25)
+        self.write_memory("§ after the upgrade\n")
+        r = self.mirror.run_pass("after memory")
+        self.assertEqual(r.status, "uploaded", r)
+        self.assertEqual(sorted(r.uploaded), ["memories/MEMORY.md", "memories/USER.md"])
+        # the old point restores its memory files and leaves the skill alone
+        skill.write_text("# edited since\n")
+        out = self.mirror.restore(stamp)
+        self.assertTrue(out["applied"], out)
+        self.assertEqual(out["written"], ["memories/MEMORY.md"])
+        self.assertEqual(out["ignored"], ["skills/my-skill/SKILL.md"])
+        self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ first fact\n")
+        self.assertEqual(skill.read_text(), "# edited since\n")
+
     # ---- the ceiling
     def _points_over(self, days, per_day=1):
         """Make one point a day (or more) going back `days` days from T0, through the mirror."""

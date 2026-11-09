@@ -70,6 +70,7 @@ except ImportError:  # the tests import this module on its own
     from signet_cli import SignetClient, SignetError
 
 MEMORY_FILES = ("MEMORY.md", "USER.md")
+MEMORY_PATHS = tuple(f"memories/{n}" for n in MEMORY_FILES)
 POINT_PREFIX = "memory-"
 POINT_SUFFIX = ".tar.gz"
 STAMP_RE = re.compile(r"(\d{8}T\d{6}Z-[0-9a-f]{6})")
@@ -91,6 +92,13 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def tracked_entries(entries: dict) -> dict:
+    """The entries of a point the mirror compares and restores today. Points made before
+    2026-11-08 evening also held the agent's skills; those entries are history, never read
+    as missing and never restored (Bob, run 5, the upgrade from a skills-era point)."""
+    return {rel: e for rel, e in (entries or {}).items() if rel in MEMORY_PATHS}
 
 
 def scan(hermes_home: Path) -> dict[str, Tracked]:
@@ -225,6 +233,8 @@ class RestorePlan:
     origin: str                # "this Mac" when the point is in this plugin's own index, else "unknown"
     memory_changes: list       # rel paths of memory files that would change
     unchanged: list
+    foreign: list = field(default_factory=list)    # names under memories/ the mirror never copies: a planted point
+    ignored: list = field(default_factory=list)    # entries outside memories/, a skills-era point's history
 
     def needs_yes(self) -> bool:
         return self.origin != "this Mac"
@@ -371,7 +381,7 @@ class Mirror:
             pass                                 # the folder did not answer; the pass itself says so below
         local = scan(self.hermes_home)
         latest = self.latest_point()
-        prev = latest.entries if latest else {}
+        prev = tracked_entries(latest.entries) if latest else {}
         accepted = set(self.state().get("accepted_missing", []))
         returned = sorted(accepted & set(local))          # an accepted removal whose file is back is tracked again
         if returned:
@@ -638,14 +648,16 @@ class Mirror:
 
     def _plan(self, manifest: Manifest, name: str) -> RestorePlan:
         local = scan(self.hermes_home)
-        mem, same = [], []
+        mem, same, foreign, ignored = [], [], [], []
         for rel, entry in sorted(manifest.entries.items()):
-            if local.get(rel) and local[rel].sha256 == entry["sha256"]:
+            if rel not in MEMORY_PATHS:
+                (foreign if rel.startswith("memories/") else ignored).append(rel)
+            elif local.get(rel) and local[rel].sha256 == entry["sha256"]:
                 same.append(rel)
             else:
                 mem.append(rel)
         origin = "this Mac" if manifest.stamp in self.index() else "unknown"
-        return RestorePlan(manifest, name, origin, mem, same)
+        return RestorePlan(manifest, name, origin, mem, same, foreign, ignored)
 
     def restore(self, stamp: str, yes: bool = False) -> dict:
         """Apply one point. Returns what was written. Refuses, with the plan, when the
@@ -661,11 +673,11 @@ class Mirror:
             to_write = plan.memory_changes
             # A point can hold only the two memory files, so a planted point naming anything else
             # under memories/ is refused before the present state is saved (Bob, case 9, 2026-11-08).
-            foreign = [rel for rel in to_write if rel not in {f"memories/{n}" for n in MEMORY_FILES}]
-            if foreign:
-                return {"applied": False, "refused": "the point names files the mirror never copies", "files": foreign, "origin": plan.origin}
+            # A skills-era point's skill entries are ignored, not refused (Bob, run 5).
+            if plan.foreign:
+                return {"applied": False, "refused": "the point names files the mirror never copies", "files": plan.foreign, "origin": plan.origin}
             if not to_write:
-                return {"applied": True, "written": [], "origin": plan.origin, "note": "already at that point"}
+                return {"applied": True, "written": [], "origin": plan.origin, "note": "already at that point", "ignored": plan.ignored}
             known = self.index().get(manifest.stamp)
             if known and sha256_file(bundle) != known.get("sha256"):
                 raise ValueError(f"{name} does not hash as the point this Mac uploaded ({known.get('sha256', '')[:12]})")
@@ -696,7 +708,7 @@ class Mirror:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(tmp, dest)
                     written.append(dest.relative_to(self.hermes_home).as_posix())
-                return {"applied": True, "written": written, "pre_restore": pre.stamp, "origin": plan.origin,
+                return {"applied": True, "written": written, "pre_restore": pre.stamp, "origin": plan.origin, "ignored": plan.ignored,
                         "note": "Hermes reads its memory files when a session starts, so this shows in the next session."}
             finally:
                 for p in stage_dir.glob("*"):

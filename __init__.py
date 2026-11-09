@@ -181,7 +181,7 @@ class Runtime:
             m = self.mirror()
             local = sd_mirror.scan(_hermes_home())
             latest = m.latest_point()
-            prev = latest.entries if latest else {}
+            prev = sd_mirror.tracked_entries(latest.entries) if latest else {}
             changed = any(prev.get(rel, {}).get("sha256") != t.sha256 for rel, t in local.items()) \
                 or any(rel not in local for rel in prev)
         except Exception as e:
