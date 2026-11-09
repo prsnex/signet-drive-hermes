@@ -285,8 +285,11 @@ class MirrorCase(unittest.TestCase):
         d["files"][path]["blob"] = buf.getvalue().hex()
         self.store.write_text(json.dumps(d))
         self.write_memory("§ newer again\n")
-        with self.assertRaises(ValueError):
-            self.mirror.restore(stamp, yes=True)
+        # the bytes under the mirror's own name are not the point it uploaded: refused as swapped,
+        # before any member is read (case 27 keys the origin on the name and the bytes)
+        out = self.mirror.restore(stamp, yes=True)
+        self.assertFalse(out["applied"], out)
+        self.assertEqual(out["origin"], "swapped")
         self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ newer again\n", "nothing written")
 
     def test_case_9_a_point_this_mac_did_not_make_is_restored_only_on_a_yes(self):
@@ -365,6 +368,45 @@ class MirrorCase(unittest.TestCase):
         self.assertEqual(out["ignored"], ["skills/my-skill/SKILL.md"])
         self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ first fact\n")
         self.assertEqual(skill.read_text(), "# edited since\n")
+
+    def test_case_27_a_point_swapped_under_the_mirrors_own_name_is_refused_even_on_a_yes(self):
+        self.mirror.run_pass("session_start")
+        stamp = self.mirror.latest_point().stamp
+        name = M.point_name(stamp)
+        # a different, well-formed bundle under the exact name, its inner stamp the writer's choice
+        other = self.home / "memories" / "swapped.txt"; other.write_text("§ swapped in\n")
+        local = {"memories/MEMORY.md": M.Tracked("memories/MEMORY.md", other, other.stat().st_size, M.sha256_file(other))}
+        manifest = M.Manifest(stamp="x", created_at=self.clock().isoformat(),
+                              entries={rel: {"sha256": t.sha256, "size": t.size} for rel, t in local.items()})
+        tmp = self.tmp / "swap.tar.gz"
+        M._write_bundle(tmp, manifest, local)
+        self.client.file_delete([f"Memory Mirror/{name}"])
+        self.client.file_upload(f"Memory Mirror/{name}", tmp)
+        plan = self.mirror.plan_restore(stamp)
+        self.assertEqual(plan.origin, "swapped")
+        out = self.mirror.restore(stamp, yes=True)
+        self.assertFalse(out["applied"], out)
+        self.assertEqual(out["origin"], "swapped")
+        self.assertEqual((self.home / "memories" / "MEMORY.md").read_text(), "§ first fact\n", "nothing written")
+        # the careful swap, the right stamp copied in, is caught the same way
+        manifest.stamp = stamp
+        M._write_bundle(tmp, manifest, local)
+        self.client.file_delete([f"Memory Mirror/{name}"])
+        self.client.file_upload(f"Memory Mirror/{name}", tmp)
+        self.assertEqual(self.mirror.plan_restore(stamp).origin, "swapped")
+        self.assertFalse(self.mirror.restore(stamp, yes=True)["applied"])
+
+    def test_case_31_a_truncated_point_reads_as_not_a_readable_point(self):
+        self.mirror.run_pass("session_start")
+        stamp = self.mirror.latest_point().stamp
+        name = M.point_name(stamp)
+        blob = bytes.fromhex(self.drive()["files"][f"Memory Mirror/{name}"]["blob"])
+        cut = self.tmp / "cut.tar.gz"; cut.write_bytes(blob[: len(blob) // 2])
+        self.client.file_delete([f"Memory Mirror/{name}"])
+        self.client.file_upload(f"Memory Mirror/{name}", cut)
+        with self.assertRaises(ValueError) as cm:
+            self.mirror.plan_restore(stamp)
+        self.assertIn("not a readable point", str(cm.exception))
 
     # ---- the ceiling
     def _points_over(self, days, per_day=1):

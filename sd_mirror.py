@@ -59,6 +59,7 @@ import re
 import secrets
 import tarfile
 import threading
+import zlib
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -617,23 +618,37 @@ class Mirror:
 
     # ---- restore --------------------------------------------------------
     def _read_point(self, name: str, keep: bool) -> tuple[Manifest, Optional[Path]]:
-        """Download one point and read its manifest. With keep, the bundle stays on disk."""
+        """Download one point and read its manifest. With keep, the bundle stays on disk.
+        The bundle's own sha256 is kept on `self._last_bundle_sha` for the origin check."""
         tmp = self.data_dir / ("restore-" + name)
         self.client.file_download(f"{self.root_name}/{name}", tmp)
         try:
+            self._last_bundle_sha = sha256_file(tmp)
             with tarfile.open(tmp, "r:gz") as tar:
                 member = tar.getmember(MANIFEST_MEMBER)
                 f = tar.extractfile(member)
                 if f is None:
                     raise ValueError(f"{name}: no manifest inside")
                 manifest = Manifest.from_json(f.read().decode("utf-8"))
-        except (tarfile.TarError, KeyError, ValueError, OSError) as e:
+        except (tarfile.TarError, KeyError, ValueError, OSError, EOFError, zlib.error) as e:
+            # a truncated stream raises EOFError or zlib.error, not TarError (Bob, run 5, case 31)
             tmp.unlink(missing_ok=True)
             raise ValueError(f"{name}: not a readable point ({e})")
         if keep:
             return manifest, tmp
         tmp.unlink(missing_ok=True)
         return manifest, None
+
+    def _origin(self, name: str, bundle_sha: Optional[str]) -> str:
+        """Where a point file came from, keyed on the stamp in its NAME and the bytes of the
+        file, never on the stamp inside the bundle, which its writer controls (Bob, run 5,
+        case 27). "this Mac": the name is in this plugin's index and the file hashes as
+        uploaded. "swapped": the name is ours and the file is not. "unknown": not ours by name."""
+        s = stamp_of(name)
+        e = self.index().get(s) if s else None
+        if not e or e.get("status", "uploaded") != "uploaded":
+            return "unknown"
+        return "this Mac" if bundle_sha and bundle_sha == e.get("sha256") else "swapped"
 
     def _name_for(self, stamp: str) -> str:
         for name in self.list_points():
@@ -644,9 +659,9 @@ class Mirror:
     def plan_restore(self, stamp: str) -> RestorePlan:
         name = self._name_for(stamp)
         manifest, _ = self._read_point(name, keep=False)
-        return self._plan(manifest, name)
+        return self._plan(manifest, name, self._last_bundle_sha)
 
-    def _plan(self, manifest: Manifest, name: str) -> RestorePlan:
+    def _plan(self, manifest: Manifest, name: str, bundle_sha: Optional[str] = None) -> RestorePlan:
         local = scan(self.hermes_home)
         mem, same, foreign, ignored = [], [], [], []
         for rel, entry in sorted(manifest.entries.items()):
@@ -656,7 +671,7 @@ class Mirror:
                 same.append(rel)
             else:
                 mem.append(rel)
-        origin = "this Mac" if manifest.stamp in self.index() else "unknown"
+        origin = self._origin(name, bundle_sha)
         return RestorePlan(manifest, name, origin, mem, same, foreign, ignored)
 
     def restore(self, stamp: str, yes: bool = False) -> dict:
@@ -666,7 +681,11 @@ class Mirror:
         manifest, bundle = self._read_point(name, keep=True)
         assert bundle is not None
         try:
-            plan = self._plan(manifest, name)
+            plan = self._plan(manifest, name, sha256_file(bundle))
+            if plan.origin == "swapped":
+                # Ours by name, not by bytes: refused whatever `yes` says (Bob, run 5, case 27).
+                return {"applied": False, "refused": "the file under this point's name is not the point this Mac uploaded",
+                        "origin": "swapped", "name": name}
             if plan.needs_yes() and not yes:
                 return {"applied": False, "needs_yes": True, "origin": plan.origin,
                         "memory": plan.memory_changes}
@@ -678,9 +697,6 @@ class Mirror:
                 return {"applied": False, "refused": "the point names files the mirror never copies", "files": plan.foreign, "origin": plan.origin}
             if not to_write:
                 return {"applied": True, "written": [], "origin": plan.origin, "note": "already at that point", "ignored": plan.ignored}
-            known = self.index().get(manifest.stamp)
-            if known and sha256_file(bundle) != known.get("sha256"):
-                raise ValueError(f"{name} does not hash as the point this Mac uploaded ({known.get('sha256', '')[:12]})")
             # The present state becomes a restore point first.
             pre = self.run_pass(reason="pre_restore", kind="pre_restore", note=f"before restore to {stamp}")
             if pre.status not in ("in_step", "uploaded"):
