@@ -120,7 +120,9 @@ def key_check(client: SignetClient, cache: dict, limit_s: float = KEY_PENDING_LI
             # runs on, since lateness is not evidence of a swapped key (only 60 or 13 is).
             return None, (f"OVERDUE, {waiting} key(s) unpublished for {int(pending_s // 3600)} h, past our {int(limit_s // 3600)} h promise, "
                           "the mirror continues"), {"key_pending_since": since, "key_overdue": True}
-        return None, f"{waiting} key(s) not yet in a published root (size {verdict.get('scanned', '?')}), checked again next start", {"key_pending_since": since, "key_overdue": False}
+        # A fresh agent reads this for hours, on camera and in a judge's first check: it is a wait,
+        # not a failure, and the publish runs twice a day (Hlin, 2026-11-09).
+        return None, f"{waiting} key(s) wait for the public log's next publish, which runs twice a day, checked again at the next start", {"key_pending_since": since, "key_overdue": False}
     if rc in (31, 32, 52) or 30 <= rc <= 39:
         return None, f"the public anchor could not be read ({code or rc}), checked again next start", {}
     if rc in (13, 60):

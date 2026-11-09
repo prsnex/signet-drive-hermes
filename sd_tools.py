@@ -207,7 +207,9 @@ def make_handlers(client_factory: Callable[[], SignetClient], files_name: str,
         except SignetError as e:
             return _signet_err(e)
         except ValueError as e:
-            return _err("hash_mismatch", f"Refused: {e}")
+            # an unreadable point, an unsafe path in a manifest, a member that does not hash: each is a
+            # refusal and says why in its message; the code names the act, not one of its causes (Bob, run 5)
+            return _err("refused", f"Refused: {e}")
         except Exception as e:
             return _err("error", str(e))
 

@@ -35,7 +35,7 @@ class StatusCase(unittest.TestCase):
         ok, detail, upd = kc(self.client(), {})
         self.assertIs(ok, True); self.assertIn("matches", detail)
         ok, detail, upd = kc(self.client(SIGNET_FAKE_TV="pending"), {})
-        self.assertIsNone(ok); self.assertIn("not yet in a published root", detail); self.assertTrue(upd.get("key_pending_since"))
+        self.assertIsNone(ok); self.assertIn("wait for the public log's next publish", detail); self.assertIn("twice a day", detail); self.assertTrue(upd.get("key_pending_since"))
         old = "2026-01-01T00:00:00+00:00"
         ok, detail, upd = kc(self.client(SIGNET_FAKE_TV="pending"), {"key_pending_since": old})
         self.assertIsNone(ok); self.assertIn("OVERDUE", detail); self.assertIn("24 h", detail); self.assertTrue(upd.get("key_overdue"))
