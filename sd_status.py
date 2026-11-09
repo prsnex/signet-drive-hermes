@@ -397,16 +397,19 @@ class Status:
         # the drive segment comes after the key in every state, so an overdue key never hides it (Bob, run 2, 2)
         if by.get("drive", {}).get("ok") and not any(x.startswith("drive") for x in parts):
             parts.append("Drive reachable.")
-        if last:
-            parts.append(f"Last mirror {_when(last.get('at', ''))}, {last.get('line', '')}")
         due = s.get("settle_due")
         if due:
-            # The clock lives in one process. If that process is gone, the due time passes with
-            # nothing saved and the start pass saves the change (Bob, case 35, 2026-11-08).
+            # A change is waiting, so the last pass's own words ("in step") would mislead beside it
+            # (Bob, case 34, 2026-11-08): the time of the last mirror stays, its verdict goes. The
+            # clock lives in one process; if that process is gone, the due time passes with nothing
+            # saved and the start pass saves the change (Bob, case 35).
+            when = f"Last mirror {_when(last.get('at', ''))}. " if last else ""
             if _is_ahead(due):
-                parts.append(f"A copy is due at {_clock(due)}.")
+                parts.append(f"{when}A copy is due at {_clock(due)}.")
             else:
-                parts.append("A change waits for the next session start to be saved.")
+                parts.append(f"{when}A change waits for the next session start to be saved.")
+        elif last:
+            parts.append(f"Last mirror {_when(last.get('at', ''))}, {last.get('line', '')}")
         err = s.get("last_error")
         if err and (not last or str(s.get("last_error_at", "")) > str(last.get("at", ""))):
             parts.append(f"Last attempt failed, {_short_error(err)}.")

@@ -408,6 +408,24 @@ class SettleCase(StatusCase):
         self.assertNotIn("A copy is due at", past)
         self.assertIn("waits for the next session start", past)
 
+    def test_the_line_drops_the_last_passs_verdict_while_a_change_waits(self):
+        from datetime import timedelta
+        rt = self._runtime(settle_minutes=30)
+        st = rt.status()
+        now = self.pkg.sd_status._now()
+        base = {"last_check": {"at": now.isoformat(), "checks": []},
+                "last_pass": {"at": (now - timedelta(minutes=50)).isoformat(), "status": "uploaded",
+                              "line": "Mirror in step. Point 20261108T234756Z-f3764b holds 1 file(s)."}}
+        quiet = st.line(base)
+        self.assertIn("Mirror in step", quiet)
+        ahead = st.line({**base, "settle_due": (now + timedelta(minutes=20)).isoformat()})
+        self.assertNotIn("in step", ahead)
+        self.assertIn("Last mirror", ahead)
+        self.assertIn("A copy is due at", ahead)
+        past = st.line({**base, "settle_due": (now - timedelta(minutes=5)).isoformat()})
+        self.assertNotIn("in step", past)
+        self.assertIn("waits for the next session start", past)
+
     def test_the_clock_is_a_daemon_so_a_short_session_is_not_held_open(self):
         rt = self._runtime(settle_minutes=30)
         self._write("x\n")
