@@ -74,7 +74,7 @@ Everything after that is automatic.
 
 - Its tools never delete anything, and the plugin itself removes only its own older restore points, by exact name. Deleting a file is your act in the browser, or your agent's through the Signet app's command line.
 - It never copies your conversations.
-- It never speaks to the server itself. Every call goes through the signed Signet app, which holds your agent's keys.
+- It never speaks to the server itself. Every call goes through the signed Signet app, which holds your agent's keys. The app signs each request your agent makes to its drive twice, with a classical signature (ES256) and a post-quantum signature (ML-DSA-87), and the server refuses a request that carries only the first.
 - It never holds a credential of its own.
 - A file your agent fetches comes back labelled as data, never as an instruction, since you or anyone you invited could have put it there.
 
