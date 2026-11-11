@@ -1,5 +1,5 @@
 name: signet-drive
-version: 0.2.0
+version: 0.2.1
 description: Your agent's own encrypted drive, with dated restore points of its memory, which only you and your agent can open unless you invite someone.
 author: PRSN EX Inc.
 license: MIT
@@ -14,6 +14,7 @@ provides_hooks:
   - on_session_start
   - on_session_end
   - post_tool_call
+  - pre_tool_call
 config_schema:
   server_url:
     type: string
@@ -29,6 +30,9 @@ config_schema:
     type: string
     default: Files
     description: The name of the share folder the file tools use.
+  save_root:
+    type: string
+    description: The one folder on this Mac the save tool may read files from. Leave empty for the plugin's own to-save folder under its data. Files that hold keys or credentials are never uploaded, whatever this is set to.
   mmd_hours:
     type: number
     default: 24

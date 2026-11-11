@@ -26,6 +26,27 @@ from pathlib import Path
 from typing import Any, Optional
 
 TEMPORARY_EXITS = {31, 32, 52}          # retry at the next trigger, nothing lost
+
+# What a child process may inherit. The Hermes process holds provider keys and other secrets
+# in its environment, and neither the Signet app nor codesign needs any of them. The app reads
+# HOME, XDG_CONFIG_HOME and SIGNET_* and nothing else (its source at v1.2.0), and starts
+# `launchctl` and `id` by bare name, so PATH must reach /usr/bin and /bin.
+_ENV_PASS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "XDG_CONFIG_HOME")
+_ENV_PASS_PREFIXES = ("LC_", "SIGNET_")
+_PATH_NEEDS = ("/usr/bin", "/bin")
+
+
+def minimal_env(extra: Optional[dict] = None, source: Optional[dict] = None) -> dict:
+    """The environment for a child process: a short fixed list of names from this process,
+    then the caller's own additions. Nothing else is inherited."""
+    src = os.environ if source is None else source
+    env = {k: v for k, v in src.items() if k in _ENV_PASS or k.startswith(_ENV_PASS_PREFIXES)}
+    parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    parts += [p for p in _PATH_NEEDS if p not in parts]
+    env["PATH"] = os.pathsep.join(parts)
+    env.setdefault("HOME", str(Path.home()))
+    env.update(extra or {})
+    return env
 REFUSED_EXITS = {10, 14, 15, 16, 17, 18, 60, 61, 62}
 
 
@@ -58,7 +79,7 @@ class SignetError(Exception):
 
 @dataclass
 class SignetClient:
-    """Runs `signet` with a fixed environment and parses what comes back."""
+    """Runs `signet` with a minimal, fixed environment and parses what comes back."""
 
     binary: str = "signet"
     server_url: Optional[str] = None
@@ -71,8 +92,7 @@ class SignetClient:
 
     # ---- plumbing -------------------------------------------------------
     def _env(self) -> dict:
-        env = dict(os.environ)
-        env.update(self.extra_env)
+        env = minimal_env(self.extra_env)
         if self.handle:
             env["SIGNET_HANDLE"] = self.handle
         return env

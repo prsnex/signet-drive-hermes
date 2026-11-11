@@ -2,7 +2,8 @@
 
 One ordinary plugin: a check at every start, the Memory Mirror on three
 triggers, four tools, one slash command and one CLI command. It calls the
-`signet` client and holds no credential of its own.
+`signet` client and holds no credential of its own. A restore from a copy
+this Mac did not make goes to Hermes's own approval prompt first.
 """
 from __future__ import annotations
 
@@ -72,6 +73,8 @@ class Runtime:
             "handle": ctx.get_config("handle", default="") or None,
             "root_name": ctx.get_config("root_name", default="Memory Mirror"),
             "files_folder": ctx.get_config("files_folder", default="Files"),
+            # The one folder the save tool reads from. Empty means the plugin's own, under its data.
+            "save_root": ctx.get_config("save_root", default="") or None,
             # Settle, then save (Chris, 2026-11-08 evening): a memory change starts this clock, a
             # further change resets it, and the point is made when it runs out.
             "settle_minutes": float(ctx.get_config("settle_minutes", default=30)),
@@ -201,9 +204,79 @@ class Runtime:
 
 
 # ------------------------------------------------------------------ register
+def _restore_gate(rt: "Runtime", approvals: sd_tools.RestoreApprovals):
+    """The two `pre_tool_call` callbacks that put a human between the model and a restore from
+    a point this Mac did not make (the catalog review of 2026-11-11).
+
+    For a call of `signet_drive_restore` with a stamp, the point is read once. If this Mac
+    made it, nothing is asked. If its origin is unknown, a one-time token is issued for that
+    stamp and the sha256 of the file's bytes, the first callback puts the token on the call
+    (`modify`), and the second asks Hermes for approval (`approve`), naming the file and its
+    hash. Hermes blocks the call on a denial, a timeout or a gate error, and when nobody is
+    there to ask. The rule key names this one file, so an "always" covers it and no other.
+    The first callback also overwrites any `_approval` the model supplied. If the point
+    cannot be read here, nothing is issued and the tool itself refuses."""
+    lock = threading.Lock()
+    seen: dict[str, tuple[float, Optional[dict]]] = {}      # one decision per tool call, shared by both callbacks
+
+    def decide(args, tool_call_id, session_id) -> Optional[dict]:
+        stamp = sd_mirror.stamp_of(str((args or {}).get("stamp") or "").strip())
+        if not stamp:
+            return None                                   # a listing changes nothing
+        key = str(tool_call_id or f"no-id:{session_id}:{stamp}")
+        with lock:
+            now = time.monotonic()
+            for k in [k for k, (at, _) in seen.items() if now - at > 120]:
+                del seen[k]
+            if key in seen:
+                return seen[key][1]
+            decision = None
+            try:
+                plan = rt.mirror().plan_restore(stamp)
+                if plan.origin == "unknown" and plan.bundle_sha:
+                    token = approvals.issue(stamp, plan.bundle_sha)
+                    files = ", ".join(p.rsplit("/", 1)[-1] for p in plan.memory_changes) or "nothing"
+                    decision = {
+                        "token": token,
+                        "message": (f"Signet Drive. Restore this agent's memory from a copy this Mac did not make. "
+                                    f"The file is {plan.name}, sha256 {plan.bundle_sha}. It would replace {files}. "
+                                    "Its contents are of unknown origin. Approve only if you know where it came from."),
+                        "rule_key": f"signet-drive:restore:{stamp}:{plan.bundle_sha}",
+                    }
+            except Exception as e:          # unreadable here: no token, and the tool refuses on its own
+                logger.info("signet-drive: the restore gate could not read %s: %s", stamp, e)
+            seen[key] = (now, decision)
+            return decision
+
+    def put_token(tool_name=None, args=None, tool_call_id=None, session_id=None, **kwargs):
+        if tool_name != sd_schemas.RESTORE["name"]:
+            return None
+        try:
+            decision = decide(args, tool_call_id, session_id)
+        except Exception:
+            decision = None
+        return {"action": "modify", "args": {"_approval": decision["token"] if decision else ""}}
+
+    def ask_human(tool_name=None, args=None, tool_call_id=None, session_id=None, **kwargs):
+        if tool_name != sd_schemas.RESTORE["name"]:
+            return None
+        try:
+            decision = decide(args, tool_call_id, session_id)
+        except Exception:
+            return None
+        if not decision:
+            return None
+        return {"action": "approve", "message": decision["message"], "rule_key": decision["rule_key"]}
+
+    return put_token, ask_human
+
+
 def register(ctx):
     rt = Runtime(ctx)
-    handlers = sd_tools.make_handlers(rt.client, rt.cfg["files_folder"], rt.mirror, _data_dir(), hermes_home=_hermes_home())
+    approvals = sd_tools.RestoreApprovals()
+    save_root = Path(rt.cfg["save_root"]).expanduser() if rt.cfg["save_root"] else None
+    handlers = sd_tools.make_handlers(rt.client, rt.cfg["files_folder"], rt.mirror, _data_dir(), hermes_home=_hermes_home(),
+                                      save_root=save_root, approvals=approvals)
 
     # hooks
     def on_session_start(session_id=None, **kwargs):
@@ -223,9 +296,13 @@ def register(ctx):
     ctx.register_hook("on_session_start", on_session_start)
     ctx.register_hook("on_session_end", on_session_end)
     ctx.register_hook("post_tool_call", post_tool_call)
+    put_token, ask_human = _restore_gate(rt, approvals)
+    ctx.register_hook("pre_tool_call", put_token)
+    ctx.register_hook("pre_tool_call", ask_human)
 
     # tools
-    for schema in (sd_schemas.SAVE, sd_schemas.FETCH, sd_schemas.LIST, sd_schemas.RESTORE):
+    save_folder = str(save_root) if save_root else str(_data_dir() / sd_tools.SAVE_FOLDER)
+    for schema in (sd_schemas.save_schema(save_folder), sd_schemas.FETCH, sd_schemas.LIST, sd_schemas.RESTORE):
         ctx.register_tool(name=schema["name"], toolset="signet_drive", schema=schema,
                           handler=handlers[schema["name"]], description=schema["description"], emoji="🔏")
 

@@ -236,6 +236,7 @@ class RestorePlan:
     unchanged: list
     foreign: list = field(default_factory=list)    # names under memories/ the mirror never copies: a planted point
     ignored: list = field(default_factory=list)    # entries outside memories/, a skills-era point's history
+    bundle_sha: str = ""       # the sha256 of the point file as read, what a human's approval is bound to
 
     def needs_yes(self) -> bool:
         return self.origin != "this Mac"
@@ -651,10 +652,17 @@ class Mirror:
         return "this Mac" if bundle_sha and bundle_sha == e.get("sha256") else "swapped"
 
     def _name_for(self, stamp: str) -> str:
-        for name in self.list_points():
-            if stamp_of(name) == stamp:
-                return name
-        raise SignetError(26, "not_found", f"no point with stamp {stamp}", [])
+        """The one point file with this stamp. The drive encrypts names on the client, so the
+        server cannot keep them unique: anyone who may write to the folder can add a second
+        file under a name that is already there. Two files for one stamp is a refusal, never
+        a pick (Hlin, 2026-11-11)."""
+        names = [name for name in self.list_points() if stamp_of(name) == stamp]
+        if not names:
+            raise SignetError(26, "not_found", f"no point with stamp {stamp}", [])
+        if len(names) > 1:
+            raise ValueError(f"{len(names)} files in {self.root_name} carry the stamp {stamp}, and a restore needs exactly one. "
+                             "Your human can remove the extra in the browser")
+        return names[0]
 
     def plan_restore(self, stamp: str) -> RestorePlan:
         name = self._name_for(stamp)
@@ -672,16 +680,23 @@ class Mirror:
             else:
                 mem.append(rel)
         origin = self._origin(name, bundle_sha)
-        return RestorePlan(manifest, name, origin, mem, same, foreign, ignored)
+        return RestorePlan(manifest, name, origin, mem, same, foreign, ignored, bundle_sha or "")
 
-    def restore(self, stamp: str, yes: bool = False) -> dict:
+    def restore(self, stamp: str, yes: bool = False, expect_sha: Optional[str] = None) -> dict:
         """Apply one point. Returns what was written. Refuses, with the plan, when the
-        point is not one this Mac made and `yes` is False."""
+        point is not one this Mac made and `yes` is False. `yes` is never the model's to set:
+        the restore tool passes it only for a call a human approved through Hermes, with
+        `expect_sha`, the hash of the file the human was shown. A file that hashes otherwise
+        was replaced after the approval and is refused."""
         name = self._name_for(stamp)
         manifest, bundle = self._read_point(name, keep=True)
         assert bundle is not None
         try:
-            plan = self._plan(manifest, name, sha256_file(bundle))
+            bundle_sha = sha256_file(bundle)
+            if expect_sha is not None and bundle_sha != expect_sha:
+                return {"applied": False, "refused": "the point file changed after it was approved, so the approval does not cover it",
+                        "name": name}
+            plan = self._plan(manifest, name, bundle_sha)
             if plan.origin == "swapped":
                 # Ours by name, not by bytes: refused whatever `yes` says (Bob, run 5, case 27).
                 return {"applied": False, "refused": "the file under this point's name is not the point this Mac uploaded",

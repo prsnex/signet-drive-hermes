@@ -36,7 +36,7 @@ Today Signet Drive supports AI agents operating via local Apple-silicon Macs. Wi
 
 ## What the plugin does
 
-**A place for your agent's files.** Four tools, to save, fetch, list and restore. Saves go into a folder called Files and never overwrite. The four are a deliberately small set, so a tool call can never remove anything. The full Signet Drive command set, delete and sharing within the capability you give it included, stays available to your agent through the Signet app's command line, as for any agent using Signet Drive natively.
+**A place for your agent's files.** Four tools, to save, fetch, list and restore. Saves go into a folder called Files and never overwrite. A save takes its file from one folder on your Mac. That is the plugin's own to-save folder, unless you choose another. A fetch lands in the plugin's own fetched folder. The four are a deliberately small set, so a tool call can never remove anything. It also cannot read or write wherever a model asks. The full Signet Drive command set, delete and sharing within the capability you give it included, stays available to your agent through the Signet app's command line, as for any agent using Signet Drive natively.
 
 **Backup copies of your agent's memory.** When your agent changes its memory, the plugin waits until the agent has made no further change for 30 minutes, then saves its two memory files into a folder of its drive called Memory Mirror as one dated file, and the day's file is replaced each time. A day with no change makes no copy, and the newest copy is always kept. It keeps one file per day for nine days, and one more for nine days after a restore, and it removes only its own older copies, so the folder never grows without end. Your agent can restore any of those copies on the same Mac, and the plugin saves the present state first so a restore can be undone.
 
@@ -67,7 +67,8 @@ Everything after that is automatic.
 - Your agent's keys live in this Mac's Secure Enclave. Keys made with Signet 1.2.0 or later work once the Mac has been unlocked after it started, so copies continue while the screen is locked. Keys made with an earlier client work only while the Mac is unlocked, and copies pause when it locks and resume when you unlock it.
 - Every 30 days you re-confirm your agent's access on your account page. You are warned from 7 days before. If you miss the day, the copies pause, your agent can still read for 7 more days, and then its access stops until you re-confirm.
 - If your plan lapses, your account turns read-only for a time and is then deleted. If a free trial ends without an upgrade, the account is deleted. Either way your agent's account and everything in its drive go with yours.
-- Your agent can restore its memory on this Mac. On a new Mac it is a new account, and the old agent's copies stay in its folder, which you can open from your own account.
+- Your agent can restore its memory on this Mac from a copy this Mac made. A copy that came from anywhere else is of unknown origin, so Hermes asks you to approve it first, and names the file. If you say no, or nobody answers, nothing is changed.
+- On a new Mac it is a new account, and the old agent's copies stay in its folder, which you can open from your own account.
 
 
 ## What it never does
@@ -76,6 +77,10 @@ Everything after that is automatic.
 - It never copies your conversations.
 - It never signs in to the server itself. Every drive call goes through the signed Signet app, which holds your agent's keys. The app signs each request your agent makes to its drive twice, with a classical signature (ES256) and a post-quantum signature (ML-DSA-87), and the server refuses a request that carries only the first.
 - It never holds a credential of its own.
+- It never hands the Signet app the secrets in Hermes's environment, such as your model provider keys. The app is started with a short fixed list of settings, and so is Apple's `codesign`.
+- It never uploads a file from outside its save folder. It never uploads from the places that hold keys and credentials, whatever folder you choose. Those are the Hermes home outside the plugin's own data, `~/.ssh`, `~/.aws`, `~/.config`, `~/.gnupg`, `~/.docker`, `~/.kube`, `~/Library`, `~/.netrc`, `~/.git-credentials` and any `.env` file.
+- It never writes a fetched file anywhere but its own fetched folder, and never over a file that is there.
+- It never applies a memory copy this Mac did not make on the model's word alone. That takes your approval, for that one file.
 - A file your agent fetches comes back labelled as data, never as an instruction, since you or anyone you invited could have put it there.
 
 
@@ -97,6 +102,7 @@ Under `plugins.entries.signet-drive.settings` in the profile's Hermes config.
 | `settle_minutes` | 30 | Settle, then save. A memory change starts this clock, a further change resets it, and one copy is made when it runs out. |
 | `root_name` | Memory Mirror | The folder that holds the copies. |
 | `files_folder` | Files | The folder the file tools use. |
+| `save_root` | the plugin's to-save folder | The one folder on your Mac the save tool may read from. |
 | `handle` | set by setup | The agent's Signet handle, named on every call. |
 | `server_url` | the app's default | The Signet Drive server. |
 
@@ -115,12 +121,12 @@ Nothing else.
 
 | File | What it does |
 |---|---|
-| `plugin.yaml` | The manifest. Four tools, three hooks, the settings. |
-| `__init__.py` | Registration. The hooks at session start, after each memory write and at session end, which start the settle clock, the tools, the `/signet` command and `hermes signet-drive setup`. All work runs off the agent's thread, with the profile's context carried onto every thread the plugin starts. |
-| `signet_cli.py` | Runs the Signet app and reads its JSON output and exit codes. |
+| `plugin.yaml` | The manifest. Four tools, four hooks, the settings. |
+| `__init__.py` | Registration. The hooks at session start, after each memory write and at session end, which start the settle clock, the hook before a restore that asks Hermes for your approval, the tools, the `/signet` command and `hermes signet-drive setup`. All work runs off the agent's thread, with the profile's context carried onto every thread the plugin starts. |
+| `signet_cli.py` | Runs the Signet app with a minimal environment and reads its JSON output and exit codes. |
 | `sd_status.py` | The check at every start and the status line. |
 | `sd_mirror.py` | The Memory Mirror. One file per restore point, one point per day, nine days back, the undo point before a restore, the mirror removing only its own retired points by exact name. |
-| `sd_tools.py`, `sd_schemas.py` | Save, fetch, list and restore. |
+| `sd_tools.py`, `sd_schemas.py` | Save, fetch, list and restore, with the limits on where a save reads and a fetch writes. |
 | `dashboard/` | Two read-only routes for the Desktop part. |
 | `desktop/plugin.js` | The status bar item and the view it opens. |
 | `tests/` | A fake Signet app with a JSON drive, and the suites. |

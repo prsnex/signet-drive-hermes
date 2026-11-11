@@ -145,6 +145,13 @@ def dispatch(d, args):
                 rows.append({"name": path.rsplit("/", 1)[1], "file_id": f["file_id"],
                              "size_bytes": f["size"] + 64, "created_at": f["created_at"],
                              "modified_at": f["created_at"]})
+        # A second file under a name already there: the real server cannot refuse it, since names
+        # are encrypted on the client. A test plants one in the store's "duplicates" list.
+        for dup in d.get("duplicates", []):
+            if dup.get("folder") == folder:
+                rows.append({"name": dup["name"], "file_id": dup.get("file_id", "fi-dup"),
+                             "size_bytes": dup.get("size", 0) + 64, "created_at": "2026-11-11T00:00:00Z",
+                             "modified_at": "2026-11-11T00:00:00Z"})
         return rows
     if args[:2] == ["file", "upload"]:
         dest = args[2]

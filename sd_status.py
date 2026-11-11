@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .signet_cli import SignetClient, SignetError
+from .signet_cli import SignetClient, SignetError, minimal_env
 
 import fcntl
 import hashlib
@@ -27,6 +27,7 @@ import urllib.request
 import zipfile
 
 HASHES_REPO_RAW = "https://raw.githubusercontent.com/prsnex/signet-drive-public-hashes/main"
+CODESIGN = "/usr/bin/codesign"        # Apple's own tool, by its full path and never by PATH
 OUR_TEAM_ID = "F2FY22A25D"            # Developer ID Application: ID Lynx Ltd.
 OUR_BUNDLE_ID = "ai.prsnex.signet"
 KEY_PENDING_LIMIT_S = 24 * 3600       # our published promise, the 24 h maximum merge delay; past it the human hears it, the mirror runs on (Bob, 11-07)
@@ -61,10 +62,11 @@ def client_genuine(client: SignetClient, cache: dict, fetch=_fetch, server_url: 
             break
     # local assurances
     try:
-        out = subprocess.run(["codesign", "-dv", "--verbose=2", str(app)], capture_output=True, text=True, timeout=30).stderr
+        env = minimal_env()
+        out = subprocess.run([CODESIGN, "-dv", "--verbose=2", str(app)], capture_output=True, text=True, timeout=30, env=env).stderr
         team = re.search(r"TeamIdentifier=(\S+)", out)
         ident = re.search(r"Identifier=(\S+)", out)
-        ok_sig = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, timeout=60).returncode == 0
+        ok_sig = subprocess.run([CODESIGN, "--verify", "--deep", "--strict", str(app)], capture_output=True, timeout=60, env=env).returncode == 0
     except (OSError, subprocess.SubprocessError):
         team = ident = None; ok_sig = False
     if not ok_sig or not team or team.group(1) != OUR_TEAM_ID or not ident or ident.group(1) != OUR_BUNDLE_ID:
