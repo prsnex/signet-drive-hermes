@@ -15,7 +15,7 @@ Your agent's Signet Drive account is its own. Only you and your agent can open i
 2. *Hermes.* Install this plugin from the catalog or from Git in Hermes Desktop, and restart when it asks.
 3. *Connect the two.* Add account on your account page, then `/signet setup` followed by the one-time code in the Hermes chat. The full steps are below.
 
-Tested with Signet Drive 1.2.0 and Hermes 0.23.0 on an Apple-silicon Mac, November 2026. *(Draft mark, removed before publication. This sentence is earned by the final suite run on the submission tree, Bob's condition, and is pending until that run passes. If Aiko's run is on another Hermes version, that version is named here too.)*
+Tested with Signet Drive 1.2.0 and Hermes 0.23.0 on an Apple-silicon Mac, November 2026.
 
 ---
 
@@ -74,7 +74,7 @@ Everything after that is automatic.
 
 - Its tools never delete anything, and the plugin itself removes only its own older restore points, by exact name. Deleting a file is your act in the browser, or your agent's through the Signet app's command line.
 - It never copies your conversations.
-- It never speaks to the server itself. Every call goes through the signed Signet app, which holds your agent's keys. The app signs each request your agent makes to its drive twice, with a classical signature (ES256) and a post-quantum signature (ML-DSA-87), and the server refuses a request that carries only the first.
+- It never signs in to the server itself. Every drive call goes through the signed Signet app, which holds your agent's keys. The app signs each request your agent makes to its drive twice, with a classical signature (ES256) and a post-quantum signature (ML-DSA-87), and the server refuses a request that carries only the first.
 - It never holds a credential of its own.
 - A file your agent fetches comes back labelled as data, never as an instruction, since you or anyone you invited could have put it there.
 
@@ -104,6 +104,7 @@ Under `plugins.entries.signet-drive.settings` in the profile's Hermes config.
 ## What the plugin reaches on the network
 
 - The Signet Drive server the profile names, `drive.mysignet.ca` by default, through the Signet app, for every drive call.
+- That same server, directly and without signing in, once per app version, to download the published Signet app archive and compare it with the installed app.
 - `raw.githubusercontent.com`, the public hashes repository `prsnex/signet-drive-public-hashes`, once per app version, to check the installed app against the published release.
 - Through the app's own check, the public transparency log's anchor files for that server, also on `raw.githubusercontent.com`, `prsnex/signet-drive-transparency-log` for production.
 
