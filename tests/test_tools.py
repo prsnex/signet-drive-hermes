@@ -411,8 +411,8 @@ class MinimalEnvironmentCase(unittest.TestCase):
         pkg = load_package()
         source = {"PATH": "/opt/x/bin", "HOME": "/Users/someone", "USER": "someone", "LOGNAME": "someone", "LANG": "en_CA.UTF-8",
                   "LC_ALL": "en_CA.UTF-8", "TMPDIR": "/tmp/x", "XDG_CONFIG_HOME": "/Users/someone/.cfg", "SIGNET_SERVER_URL": "https://s",
-                  "ANTHROPIC_API_KEY": "sk-1", "OPENAI_API_KEY": "sk-2", "VENICE_API_KEY": "v", "AWS_SECRET_ACCESS_KEY": "a",
-                  "GITHUB_TOKEN": "g", "HTTPS_PROXY": "http://user:pw@proxy", "SSH_AUTH_SOCK": "/tmp/agent", "HERMES_HOME": "/h"}
+                  "MODEL_PROVIDER_API_KEY": "secret-1", "OTHER_PROVIDER_API_KEY": "secret-2", "CLOUD_SECRET_ACCESS_KEY": "secret-3",
+                  "SOURCE_HOST_TOKEN": "secret-4", "HTTPS_PROXY": "http://user:pw@proxy", "SSH_AUTH_SOCK": "/tmp/agent", "HERMES_HOME": "/h"}
         from signet_drive_plugin.signet_cli import minimal_env
         env = minimal_env({"EXTRA": "1"}, source=source)
         self.assertEqual(sorted(env), sorted(["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "XDG_CONFIG_HOME",
